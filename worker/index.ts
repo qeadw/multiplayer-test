@@ -28,6 +28,7 @@ interface PlayerData {
   kills: number;
   deaths: number;
   spellUses: { missile: number; dash: number; fireball: number; punch: number };
+  lastSeen: number;
 }
 
 export class GameRoom {
@@ -87,8 +88,12 @@ export class GameRoom {
             health: prev?.health ?? MAX_HEALTH,
             kills: prev?.kills ?? 0,
             deaths: prev?.deaths ?? 0,
-            spellUses: prev?.spellUses ?? { missile: 0, dash: 0, fireball: 0, punch: 0 }
+            spellUses: prev?.spellUses ?? { missile: 0, dash: 0, fireball: 0, punch: 0 },
+            lastSeen: Date.now()
           };
+
+          // Clean up stale players (not seen in 5 seconds)
+          this.cleanupStalePlayers();
 
           this.broadcast(JSON.stringify({
             type: "player_update",
@@ -160,15 +165,7 @@ export class GameRoom {
         }
 
         if (data.type === "projectile") {
-          // Track spell usage for projectiles
-          if (player.data) {
-            const spell = data.type === 'fireball' ? 'fireball' : 'missile';
-            if (data.projType === 'fireball') {
-              player.data.spellUses.fireball++;
-            } else {
-              player.data.spellUses.missile++;
-            }
-          }
+          // Just broadcast projectiles to other players (spell tracking happens on attack/hit)
           this.broadcast(JSON.stringify(data), server);
         }
 
@@ -222,6 +219,20 @@ export class GameRoom {
     for (const [ws, _] of this.players) {
       if (ws !== exclude) {
         try { ws.send(message); } catch (e) {}
+      }
+    }
+  }
+
+  cleanupStalePlayers() {
+    const now = Date.now();
+    const staleTimeout = 5000; // 5 seconds
+
+    for (const [ws, player] of this.players) {
+      if (player.data && now - player.data.lastSeen > staleTimeout) {
+        // Player is stale, remove them
+        this.broadcast(JSON.stringify({ type: "player_left", id: player.id }), ws);
+        this.players.delete(ws);
+        try { ws.close(); } catch (e) {}
       }
     }
   }

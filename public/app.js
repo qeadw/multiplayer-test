@@ -56,17 +56,17 @@ function playSound(freq, duration, type = 'sine') {
     gain.connect(audioCtx.destination);
     osc.type = type;
     osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
     osc.start();
     osc.stop(audioCtx.currentTime + duration);
 }
-function playDeathSound() { playSound(400, 0.3); setTimeout(() => playSound(200, 0.2), 100); }
-function playHitSound() { playSound(200, 0.1, 'square'); }
-function playShootSound() { playSound(600, 0.1, 'sawtooth'); }
-function playDashSound() { playSound(300, 0.15, 'triangle'); }
-function playFireballSound() { playSound(150, 0.4, 'sawtooth'); }
-function playExplosionSound() { playSound(80, 0.3, 'square'); }
+function playDeathSound() { playSound(120, 0.4); setTimeout(() => playSound(80, 0.3), 150); }
+function playHitSound() { playSound(100, 0.1, 'square'); }
+function playShootSound() { playSound(200, 0.1, 'sawtooth'); }
+function playDashSound() { playSound(150, 0.15, 'triangle'); }
+function playFireballSound() { playSound(80, 0.5, 'sawtooth'); }
+function playExplosionSound() { playSound(50, 0.4, 'square'); }
 
 // Game state
 let player = {
@@ -180,12 +180,30 @@ function getWrappedDistance(x1, y1, x2, y2) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Find nearest player in range
+// Rectangular hitbox collision (checks if two rectangles overlap)
+const PLAYER_HITBOX_WIDTH = 40;
+const PLAYER_HITBOX_HEIGHT = 40;
+
+function checkRectCollision(x1, y1, x2, y2, range) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    // Handle wrapping
+    if (dx > WORLD_PIXELS / 2) dx -= WORLD_PIXELS;
+    if (dx < -WORLD_PIXELS / 2) dx += WORLD_PIXELS;
+    if (dy > WORLD_PIXELS / 2) dy -= WORLD_PIXELS;
+    if (dy < -WORLD_PIXELS / 2) dy += WORLD_PIXELS;
+    // Check if within rectangular range
+    return Math.abs(dx) < range && Math.abs(dy) < range;
+}
+
+// Find nearest player in range (using rectangular hitbox)
 function findNearestPlayer(range) {
-    let nearest = null, nearestDist = range;
+    let nearest = null, nearestDist = Infinity;
     for (const [id, p] of Object.entries(otherPlayers)) {
-        const dist = getWrappedDistance(player.x, player.y, p.x, p.y);
-        if (dist < nearestDist) { nearestDist = dist; nearest = id; }
+        if (checkRectCollision(player.x, player.y, p.x, p.y, range)) {
+            const dist = getWrappedDistance(player.x, player.y, p.x, p.y);
+            if (dist < nearestDist) { nearestDist = dist; nearest = id; }
+        }
     }
     return nearest;
 }
@@ -253,23 +271,25 @@ function useAbility(clickX, clickY) {
 }
 
 // Spawn projectile
-function spawnProjectile(type, dirX, dirY) {
+function spawnProjectile(projType, dirX, dirY) {
     const proj = {
         id: `${playerId}_${Date.now()}`,
-        type,
+        projType,
         x: player.x,
         y: player.y,
         dirX, dirY,
         ownerId: playerId,
-        speed: type === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED,
-        damage: type === 'fireball' ? FIREBALL_DAMAGE : MISSILE_DAMAGE,
+        speed: projType === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED,
+        damage: projType === 'fireball' ? FIREBALL_DAMAGE : MISSILE_DAMAGE,
         hue: playerHue,
         born: Date.now()
     };
     projectiles.push(proj);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "projectile", ...proj }));
+        const msg = { type: "projectile", ...proj };
+        console.log('SENDING projectile:', msg);
+        ws.send(JSON.stringify(msg));
     }
 }
 
@@ -293,19 +313,17 @@ function updateProjectiles(dt) {
         // Check collision with players (only check our own projectiles)
         if (p.ownerId === playerId) {
             for (const [id, other] of Object.entries(otherPlayers)) {
-                const dist = getWrappedDistance(p.x, p.y, other.x, other.y);
-                const hitRadius = p.type === 'fireball' ? 30 : 20;
+                const hitRange = p.projType === 'fireball' ? 35 : 25;
 
-                if (dist < hitRadius) {
-                    if (p.type === 'fireball') {
+                if (checkRectCollision(p.x, p.y, other.x, other.y, hitRange)) {
+                    if (p.projType === 'fireball') {
                         // Explosion damages all nearby
                         createExplosion(p.x, p.y, p.hue);
                         playExplosionSound();
 
                         // Damage all players in radius
                         for (const [eid, eplayer] of Object.entries(otherPlayers)) {
-                            const edist = getWrappedDistance(p.x, p.y, eplayer.x, eplayer.y);
-                            if (edist < FIREBALL_RADIUS) {
+                            if (checkRectCollision(p.x, p.y, eplayer.x, eplayer.y, FIREBALL_RADIUS)) {
                                 if (ws && ws.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({ type: "attack", targetId: eid, damage: FIREBALL_DAMAGE, spell: 'fireball' }));
                                 }
@@ -408,7 +426,8 @@ function connectToServer() {
                             color: `hsl(${data.hue}, 70%, 50%)`,
                             colorDark: `hsl(${data.hue}, 70%, 35%)`,
                             colorLight: `hsl(${data.hue}, 70%, 65%)`,
-                            health: data.health || MAX_HEALTH
+                            health: data.health || MAX_HEALTH,
+                            lastSeen: Date.now()
                         };
                         if (isNew) updatePlayerCount();
                     }
@@ -459,8 +478,16 @@ function connectToServer() {
                     }
                     break;
                 case 'projectile':
+                    console.log('RECEIVED projectile:', data, 'myId:', playerId);
                     if (data.ownerId !== playerId) {
+                        // Reset born time to prevent clock sync issues
+                        data.born = Date.now();
+                        // Ensure speed is set for remote projectiles
+                        if (!data.speed) {
+                            data.speed = data.projType === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED;
+                        }
                         projectiles.push(data);
+                        console.log('ADDED projectile, total:', projectiles.length);
                     }
                     break;
             }
@@ -477,6 +504,22 @@ function connectToServer() {
 
 function updatePlayerCount() {
     playerCountEl.textContent = `Players: ${Object.keys(otherPlayers).length + 1}`;
+}
+
+// Clean up stale players client-side
+function cleanupStalePlayers() {
+    const now = Date.now();
+    const staleTimeout = 5000; // 5 seconds
+    let removed = false;
+
+    for (const [id, p] of Object.entries(otherPlayers)) {
+        if (p.lastSeen && now - p.lastSeen > staleTimeout) {
+            delete otherPlayers[id];
+            removed = true;
+        }
+    }
+
+    if (removed) updatePlayerCount();
 }
 
 // Pre-render world
@@ -615,7 +658,7 @@ function drawProjectiles(cameraIsoX, cameraIsoY) {
         const screenX = centerX + iso.x - cameraIsoX;
         const screenY = centerY + iso.y - cameraIsoY;
 
-        if (p.type === 'fireball') {
+        if (p.projType === 'fireball') {
             // Draw fireball (larger, orange)
             ctx.beginPath();
             ctx.arc(screenX, screenY - 15, 12, 0, Math.PI * 2);
@@ -847,6 +890,7 @@ function render() {
 }
 
 let lastTime = 0;
+let lastCleanup = 0;
 function gameLoop(timestamp) {
     const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
     lastTime = timestamp;
@@ -854,6 +898,13 @@ function gameLoop(timestamp) {
     updateProjectiles(dt);
     updateExplosions();
     sendPosition();
+
+    // Cleanup stale players every second
+    if (timestamp - lastCleanup > 1000) {
+        cleanupStalePlayers();
+        lastCleanup = timestamp;
+    }
+
     render();
     requestAnimationFrame(gameLoop);
 }

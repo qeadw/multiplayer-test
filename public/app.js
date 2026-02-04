@@ -287,9 +287,7 @@ function spawnProjectile(projType, dirX, dirY) {
     projectiles.push(proj);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        const msg = { type: "projectile", ...proj };
-        console.log('SENDING projectile:', msg);
-        ws.send(JSON.stringify(msg));
+        ws.send(JSON.stringify({ type: "projectile", ...proj }));
     }
 }
 
@@ -478,16 +476,12 @@ function connectToServer() {
                     }
                     break;
                 case 'projectile':
-                    console.log('RECEIVED projectile:', data, 'myId:', playerId);
                     if (data.ownerId !== playerId) {
-                        // Reset born time to prevent clock sync issues
                         data.born = Date.now();
-                        // Ensure speed is set for remote projectiles
                         if (!data.speed) {
                             data.speed = data.projType === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED;
                         }
                         projectiles.push(data);
-                        console.log('ADDED projectile, total:', projectiles.length);
                     }
                     break;
             }

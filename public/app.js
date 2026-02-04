@@ -136,8 +136,8 @@ function sendPosition() {
 
 // Connect to server
 function connectToServer() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?room=default`;
+    // Always connect to Cloudflare Workers server
+    const wsUrl = 'wss://multiplayer-test.averyopela1.workers.dev/ws?room=default';
 
     console.log('Connecting to:', wsUrl);
     playerCountEl.textContent = 'Connecting...';

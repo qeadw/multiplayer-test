@@ -2,11 +2,15 @@ export interface Env {
   GAME_ROOM: DurableObjectNamespace;
 }
 
+const MAX_HEALTH = 4;
+const SPAWN_X = 768; // WORLD_PIXELS / 2
+const SPAWN_Y = 768;
+const ATTACK_RANGE = 80; // Server-side validation range (slightly larger than client)
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // WebSocket endpoint
     if (url.pathname === "/ws") {
       const roomId = url.searchParams.get("room") || "default";
       const id = env.GAME_ROOM.idFromName(roomId);
@@ -14,7 +18,6 @@ export default {
       return room.fetch(request);
     }
 
-    // Let assets handle other requests
     return new Response("Not found", { status: 404 });
   },
 };
@@ -24,6 +27,7 @@ interface PlayerData {
   y: number;
   hue: number;
   facingRight: boolean;
+  health: number;
 }
 
 export class GameRoom {
@@ -74,23 +78,78 @@ export class GameRoom {
     server.addEventListener("message", (event) => {
       try {
         const data = JSON.parse(event.data as string);
+        const player = this.players.get(server);
+        if (!player) return;
 
         if (data.type === "update") {
-          const player = this.players.get(server);
-          if (player) {
-            player.data = {
-              x: data.x,
-              y: data.y,
-              hue: data.hue,
-              facingRight: data.facingRight
-            };
+          // Initialize health if new player
+          const currentHealth = player.data?.health ?? MAX_HEALTH;
 
-            // Broadcast to others
-            this.broadcast(JSON.stringify({
-              type: "player_update",
-              id: player.id,
-              ...player.data
-            }), server);
+          player.data = {
+            x: data.x,
+            y: data.y,
+            hue: data.hue,
+            facingRight: data.facingRight,
+            health: currentHealth
+          };
+
+          // Broadcast to others
+          this.broadcast(JSON.stringify({
+            type: "player_update",
+            id: player.id,
+            ...player.data
+          }), server);
+        }
+
+        if (data.type === "attack") {
+          const targetId = data.targetId;
+
+          // Find target player
+          let targetWs: WebSocket | null = null;
+          let targetPlayer: { id: string; data: PlayerData | null } | null = null;
+
+          for (const [ws, p] of this.players) {
+            if (p.id === targetId) {
+              targetWs = ws;
+              targetPlayer = p;
+              break;
+            }
+          }
+
+          if (targetPlayer && targetPlayer.data && player.data) {
+            // Validate attack range on server
+            const dx = targetPlayer.data.x - player.data.x;
+            const dy = targetPlayer.data.y - player.data.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist <= ATTACK_RANGE) {
+              // Deal damage
+              targetPlayer.data.health -= 1;
+              const newHealth = targetPlayer.data.health;
+
+              // Broadcast hit to all players
+              this.broadcast(JSON.stringify({
+                type: "hit",
+                attackerId: player.id,
+                targetId: targetId,
+                newHealth: newHealth
+              }));
+
+              // If dead, respawn after a short delay
+              if (newHealth <= 0) {
+                targetPlayer.data.health = MAX_HEALTH;
+                targetPlayer.data.x = SPAWN_X;
+                targetPlayer.data.y = SPAWN_Y;
+
+                // Broadcast respawn
+                this.broadcast(JSON.stringify({
+                  type: "respawn",
+                  id: targetId,
+                  x: SPAWN_X,
+                  y: SPAWN_Y
+                }));
+              }
+            }
           }
         }
       } catch (e) {

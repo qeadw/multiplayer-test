@@ -3,6 +3,15 @@
   "version": "1.0.0",
   "description": "Multiplayer movement test with Pac-Man wrapping",
   "scripts": {
+    "dev": "partykit dev",
+    "deploy": "partykit deploy",
     "start": "npx serve public"
+  },
+  "dependencies": {
+    "partykit": "^0.0.108",
+    "partysocket": "^1.0.1"
+  },
+  "devDependencies": {
+    "wrangler": "^4.62.0"
   }
 }

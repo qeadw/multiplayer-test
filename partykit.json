@@ -1,0 +1,5 @@
+{
+  "name": "multiplayer-test",
+  "main": "party/server.ts",
+  "serve": "./public"
+}

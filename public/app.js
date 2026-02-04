@@ -1,33 +1,8 @@
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
-import {
-    getDatabase,
-    ref,
-    set,
-    onValue,
-    onDisconnect,
-    remove
-} from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js';
-
-// Firebase configuration
-const firebaseConfig = {
-    apiKey: "AIzaSyAOmXMwzVhnLpMsLiB8JzyT3ZVMG2w1JmE",
-    authDomain: "feature-requests-7ee3c.firebaseapp.com",
-    databaseURL: "https://feature-requests-7ee3c-default-rtdb.firebaseio.com",
-    projectId: "feature-requests-7ee3c",
-    storageBucket: "feature-requests-7ee3c.firebasestorage.app",
-    messagingSenderId: "256362942849",
-    appId: "1:256362942849:web:18b99ffe1341e9c3d05880"
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
 // Game constants
-const TILE_SIZE = 64; // Size of each tile in world units
+const TILE_SIZE = 64;
 const TILES_PER_CHUNK = 8;
 const CHUNK_SIZE = TILE_SIZE * TILES_PER_CHUNK;
-const WORLD_SIZE = 3; // 3x3 chunks
+const WORLD_SIZE = 3;
 const WORLD_PIXELS = CHUNK_SIZE * WORLD_SIZE;
 const PLAYER_SPEED = 150;
 const UPDATE_RATE = 50;
@@ -36,8 +11,8 @@ const UPDATE_RATE = 50;
 const ISO_TILE_WIDTH = 64;
 const ISO_TILE_HEIGHT = 32;
 
-// Generate a random player ID
-const playerId = 'player_' + Math.random().toString(36).substr(2, 9);
+// Player ID (assigned by server)
+let playerId = null;
 
 // Generate a random color for this player
 const playerHue = Math.random() * 360;
@@ -63,6 +38,8 @@ let player = {
 
 let otherPlayers = {};
 let lastUpdateTime = 0;
+let ws = null;
+let connected = false;
 
 // Input state
 const input = {
@@ -119,77 +96,128 @@ function updatePlayer(deltaTime) {
     let vx = 0;
     let vy = 0;
 
-    // WASD moves in world space (before isometric transform)
     if (input.up) { vx -= 1; vy -= 1; }
     if (input.down) { vx += 1; vy += 1; }
     if (input.left) { vx -= 1; vy += 1; }
     if (input.right) { vx += 1; vy -= 1; }
 
-    // Normalize diagonal movement
     if (vx !== 0 || vy !== 0) {
         const len = Math.sqrt(vx * vx + vy * vy);
         vx /= len;
         vy /= len;
     }
 
-    // Update position
     player.x += vx * PLAYER_SPEED * deltaTime;
     player.y += vy * PLAYER_SPEED * deltaTime;
 
-    // Wrap position
     player.x = wrapPosition(player.x);
     player.y = wrapPosition(player.y);
 
-    // Update facing direction
     if (vx > 0) player.facingRight = true;
     if (vx < 0) player.facingRight = false;
 }
 
-// Send position to Firebase
+// Send position to server
 function sendPosition() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
     const now = Date.now();
     if (now - lastUpdateTime < UPDATE_RATE) return;
     lastUpdateTime = now;
 
-    const playerRef = ref(db, `multiplayer-test/players/${playerId}`);
-    set(playerRef, {
+    ws.send(JSON.stringify({
+        type: "update",
         x: player.x,
         y: player.y,
         hue: player.hue,
-        facingRight: player.facingRight,
-        timestamp: Date.now()
-    });
+        facingRight: player.facingRight
+    }));
 }
 
-// Initialize Firebase listeners
-function initMultiplayer() {
-    const playersRef = ref(db, 'multiplayer-test/players');
+// Connect to server
+function connectToServer() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws?room=default`;
 
-    onValue(playersRef, (snapshot) => {
-        const data = snapshot.val() || {};
-        otherPlayers = {};
-        let count = 0;
+    console.log('Connecting to:', wsUrl);
+    playerCountEl.textContent = 'Connecting...';
 
-        for (const [id, playerData] of Object.entries(data)) {
-            count++;
-            if (id !== playerId) {
-                if (Date.now() - playerData.timestamp < 5000) {
-                    otherPlayers[id] = {
-                        ...playerData,
-                        color: `hsl(${playerData.hue}, 70%, 50%)`,
-                        colorDark: `hsl(${playerData.hue}, 70%, 35%)`,
-                        colorLight: `hsl(${playerData.hue}, 70%, 65%)`
-                    };
-                }
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log('Connected to server');
+        connected = true;
+        sendPosition();
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+
+            switch (data.type) {
+                case 'init':
+                    playerId = data.yourId;
+                    console.log('My ID:', playerId);
+                    // Initialize other players from server state
+                    for (const [id, pData] of Object.entries(data.players)) {
+                        if (id !== playerId) {
+                            otherPlayers[id] = {
+                                ...pData,
+                                color: `hsl(${pData.hue}, 70%, 50%)`,
+                                colorDark: `hsl(${pData.hue}, 70%, 35%)`,
+                                colorLight: `hsl(${pData.hue}, 70%, 65%)`
+                            };
+                        }
+                    }
+                    updatePlayerCount();
+                    break;
+
+                case 'player_update':
+                    if (data.id !== playerId) {
+                        otherPlayers[data.id] = {
+                            x: data.x,
+                            y: data.y,
+                            hue: data.hue,
+                            facingRight: data.facingRight,
+                            color: `hsl(${data.hue}, 70%, 50%)`,
+                            colorDark: `hsl(${data.hue}, 70%, 35%)`,
+                            colorLight: `hsl(${data.hue}, 70%, 65%)`
+                        };
+                    }
+                    break;
+
+                case 'player_joined':
+                    console.log('Player joined:', data.id);
+                    updatePlayerCount();
+                    break;
+
+                case 'player_left':
+                    console.log('Player left:', data.id);
+                    delete otherPlayers[data.id];
+                    updatePlayerCount();
+                    break;
             }
+        } catch (e) {
+            console.error('Failed to parse message:', e);
         }
+    };
 
-        playerCountEl.textContent = `Players: ${count}`;
-    });
+    ws.onclose = () => {
+        console.log('Disconnected from server');
+        connected = false;
+        playerCountEl.textContent = 'Disconnected - Reconnecting...';
+        // Reconnect after 2 seconds
+        setTimeout(connectToServer, 2000);
+    };
 
-    const playerRef = ref(db, `multiplayer-test/players/${playerId}`);
-    onDisconnect(playerRef).remove();
-    sendPosition();
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+}
+
+function updatePlayerCount() {
+    const count = Object.keys(otherPlayers).length + 1;
+    playerCountEl.textContent = `Players: ${count}`;
 }
 
 // Draw an isometric tile
@@ -204,7 +232,6 @@ function drawIsoTile(screenX, screenY, color1, color2, strokeColor) {
     ctx.lineTo(screenX - hw, screenY);
     ctx.closePath();
 
-    // Gradient fill
     const gradient = ctx.createLinearGradient(screenX - hw, screenY - hh, screenX + hw, screenY + hh);
     gradient.addColorStop(0, color1);
     gradient.addColorStop(1, color2);
@@ -224,7 +251,6 @@ function drawWorld(cameraIsoX, cameraIsoY) {
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
 
-    // Draw tiles with wrapping
     for (let wx = -1; wx <= 1; wx++) {
         for (let wy = -1; wy <= 1; wy++) {
             const worldOffsetX = wx * WORLD_PIXELS;
@@ -239,18 +265,14 @@ function drawWorld(cameraIsoX, cameraIsoY) {
                     const screenX = centerX + tileIso.x - cameraIsoX;
                     const screenY = centerY + tileIso.y - cameraIsoY;
 
-                    // Cull off-screen tiles
                     if (screenX < -ISO_TILE_WIDTH || screenX > canvas.width + ISO_TILE_WIDTH ||
                         screenY < -ISO_TILE_HEIGHT * 2 || screenY > canvas.height + ISO_TILE_HEIGHT * 2) {
                         continue;
                     }
 
-                    // Chunk coloring
                     const chunkX = Math.floor(tx / TILES_PER_CHUNK);
                     const chunkY = Math.floor(ty / TILES_PER_CHUNK);
                     const isEvenChunk = (chunkX + chunkY) % 2 === 0;
-
-                    // Tile coloring (checkerboard within chunk)
                     const isEvenTile = (tx + ty) % 2 === 0;
 
                     let color1, color2, stroke;
@@ -291,12 +313,11 @@ function drawWorld(cameraIsoX, cameraIsoY) {
     ctx.setLineDash([]);
 }
 
-// Draw an isometric player (cube/character)
+// Draw an isometric player
 function drawIsoPlayer(worldX, worldY, colors, isLocal, cameraIsoX, cameraIsoY) {
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
 
-    // Draw player at all wrapped positions
     for (let wx = -1; wx <= 1; wx++) {
         for (let wy = -1; wy <= 1; wy++) {
             const px = worldX + wx * WORLD_PIXELS;
@@ -306,13 +327,11 @@ function drawIsoPlayer(worldX, worldY, colors, isLocal, cameraIsoX, cameraIsoY) 
             const screenX = centerX + iso.x - cameraIsoX;
             const screenY = centerY + iso.y - cameraIsoY;
 
-            // Cull off-screen
             if (screenX < -50 || screenX > canvas.width + 50 ||
                 screenY < -50 || screenY > canvas.height + 50) {
                 continue;
             }
 
-            // Draw isometric cube (player)
             const size = 20;
             const height = 30;
 
@@ -360,11 +379,10 @@ function drawIsoPlayer(worldX, worldY, colors, isLocal, cameraIsoX, cameraIsoY) 
     }
 }
 
-// Collect all players for depth sorting
+// Get all players for rendering
 function getAllPlayersForRendering() {
     const players = [];
 
-    // Add local player
     players.push({
         x: player.x,
         y: player.y,
@@ -372,7 +390,6 @@ function getAllPlayersForRendering() {
         isLocal: true
     });
 
-    // Add other players
     for (const [id, p] of Object.entries(otherPlayers)) {
         players.push({
             x: p.x,
@@ -382,9 +399,7 @@ function getAllPlayersForRendering() {
         });
     }
 
-    // Sort by depth (y + x for isometric)
     players.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-
     return players;
 }
 
@@ -394,15 +409,11 @@ function render() {
 
     drawWorld(cameraIso.x, cameraIso.y);
 
-    // Get all players sorted by depth
     const players = getAllPlayersForRendering();
-
-    // Draw all players
     for (const p of players) {
         drawIsoPlayer(p.x, p.y, p.colors, p.isLocal, cameraIso.x, cameraIso.y);
     }
 
-    // Draw position info
     ctx.fillStyle = '#fff';
     ctx.font = '12px monospace';
     ctx.fillText(`Pos: ${Math.floor(player.x)}, ${Math.floor(player.y)}`, 10, canvas.height - 10);
@@ -424,11 +435,5 @@ function gameLoop(timestamp) {
 }
 
 // Start
-initMultiplayer();
+connectToServer();
 requestAnimationFrame(gameLoop);
-
-// Clean up
-window.addEventListener('beforeunload', () => {
-    const playerRef = ref(db, `multiplayer-test/players/${playerId}`);
-    remove(playerRef);
-});

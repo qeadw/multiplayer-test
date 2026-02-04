@@ -124,9 +124,11 @@ function worldToIso(x, y) {
     };
 }
 
-// Clamp position to world bounds
-function clampPosition(pos) {
-    return Math.max(10, Math.min(WORLD_PIXELS - 10, pos));
+// Wrap position (Pac-Man style)
+function wrapPosition(pos) {
+    if (pos < 0) return pos + WORLD_PIXELS;
+    if (pos >= WORLD_PIXELS) return pos - WORLD_PIXELS;
+    return pos;
 }
 
 // Get distance between two points
@@ -170,8 +172,8 @@ function updatePlayer(deltaTime) {
         vx /= len; vy /= len;
     }
 
-    player.x = clampPosition(player.x + vx * PLAYER_SPEED * deltaTime);
-    player.y = clampPosition(player.y + vy * PLAYER_SPEED * deltaTime);
+    player.x = wrapPosition(player.x + vx * PLAYER_SPEED * deltaTime);
+    player.y = wrapPosition(player.y + vy * PLAYER_SPEED * deltaTime);
     if (vx > 0) player.facingRight = true;
     if (vx < 0) player.facingRight = false;
 }
@@ -217,6 +219,7 @@ function connectToServer() {
                     break;
                 case 'player_update':
                     if (data.id !== playerId) {
+                        const isNew = !otherPlayers[data.id];
                         otherPlayers[data.id] = {
                             x: data.x, y: data.y, hue: data.hue, facingRight: data.facingRight,
                             color: `hsl(${data.hue}, 70%, 50%)`,
@@ -224,6 +227,7 @@ function connectToServer() {
                             colorLight: `hsl(${data.hue}, 70%, 65%)`,
                             health: data.health || MAX_HEALTH
                         };
+                        if (isNew) updatePlayerCount();
                     }
                     break;
                 case 'player_joined':

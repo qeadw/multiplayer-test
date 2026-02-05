@@ -171,20 +171,39 @@ authForm.addEventListener('submit', (e) => {
     const username = document.getElementById('auth-username').value.trim();
     const password = document.getElementById('auth-password').value;
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            type: isRegistering ? 'register' : 'login',
-            username,
-            password
-        }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        authError.textContent = 'Not connected to server. Please wait...';
+        return;
     }
+
+    if (username.length < 3) {
+        authError.textContent = 'Username must be at least 3 characters';
+        return;
+    }
+
+    if (password.length < 4) {
+        authError.textContent = 'Password must be at least 4 characters';
+        return;
+    }
+
+    authError.textContent = '';
+    authSubmit.disabled = true;
+    authSubmit.textContent = 'Please wait...';
+
+    ws.send(JSON.stringify({
+        type: isRegistering ? 'register' : 'login',
+        username,
+        password
+    }));
 });
 
 guestPlay.addEventListener('click', (e) => {
     e.preventDefault();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'guest_play' }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        authError.textContent = 'Not connected to server. Please wait...';
+        return;
     }
+    ws.send(JSON.stringify({ type: 'guest_play' }));
 });
 
 document.getElementById('logout-btn').addEventListener('click', () => {
@@ -1042,6 +1061,7 @@ function connectToServer() {
 
     ws.onopen = () => {
         connected = true;
+        playerCountEl.textContent = 'Connected';
         // Check for saved session
         const savedAccountId = localStorage.getItem('mage_account_id');
         if (savedAccountId) {
@@ -1106,6 +1126,8 @@ function handleServerMessage(data) {
 
         case 'auth_error':
             authError.textContent = data.message;
+            authSubmit.disabled = false;
+            authSubmit.textContent = isRegistering ? 'Register' : 'Login';
             break;
 
         case 'account_data':

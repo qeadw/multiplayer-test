@@ -10,6 +10,155 @@
     <canvas id="game-canvas"></canvas>
     <div id="player-count">Players: 0</div>
     <div id="controls-hint">WASD to move</div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="modal">
+        <div class="modal-content auth-modal-content">
+            <h2 id="auth-title">Login</h2>
+            <div id="auth-error" class="error-msg"></div>
+            <form id="auth-form">
+                <input type="text" id="auth-username" placeholder="Username" required minlength="3" maxlength="20">
+                <input type="password" id="auth-password" placeholder="Password" required minlength="4">
+                <button type="submit" id="auth-submit">Login</button>
+            </form>
+            <div class="auth-links">
+                <a href="#" id="auth-toggle">Create Account</a>
+                <span>|</span>
+                <a href="#" id="guest-play">Play as Guest</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Spell Maker Modal -->
+    <div id="spell-modal" class="modal hidden">
+        <div class="modal-content spell-modal-content">
+            <div class="modal-header">
+                <h2>Spell Maker</h2>
+                <button id="spell-modal-close" class="close-btn">&times;</button>
+            </div>
+            <div class="spell-maker-container">
+                <div class="spell-config">
+                    <input type="text" id="spell-name" placeholder="Spell Name" maxlength="20">
+                    <div id="points-remaining">Points: <span>10</span>/10</div>
+
+                    <div class="stat-sliders">
+                        <div class="stat-row">
+                            <label>Damage</label>
+                            <input type="range" id="stat-damage" min="-2" max="4" value="1">
+                            <span class="stat-value">1</span>
+                            <span class="stat-info">(-2=heal, 4=max)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>AOE Radius</label>
+                            <input type="range" id="stat-aoe" min="0" max="4" value="0">
+                            <span class="stat-value">0</span>
+                            <span class="stat-info">(0/25/50/75/100px)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>Speed</label>
+                            <input type="range" id="stat-speed" min="0" max="4" value="1">
+                            <span class="stat-value">1</span>
+                            <span class="stat-info">(200-400px/s)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>Cooldown</label>
+                            <input type="range" id="stat-cooldown" min="0" max="4" value="1">
+                            <span class="stat-value">1</span>
+                            <span class="stat-info">(2000-600ms)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>Range</label>
+                            <input type="range" id="stat-range" min="0" max="4" value="1">
+                            <span class="stat-value">1</span>
+                            <span class="stat-info">(1500-3500ms)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>Multishot</label>
+                            <input type="range" id="stat-multishot" min="0" max="3" value="0">
+                            <span class="stat-value">0</span>
+                            <span class="stat-info">(1-4 projectiles)</span>
+                        </div>
+                        <div class="stat-row">
+                            <label>Homing</label>
+                            <input type="range" id="stat-homing" min="0" max="2" value="0">
+                            <span class="stat-value">0</span>
+                            <span class="stat-info">(none/slight/strong)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sprite-editor">
+                    <h3>Sprite Editor (8x8)</h3>
+                    <canvas id="sprite-canvas" width="160" height="160"></canvas>
+                    <div class="palette" id="color-palette"></div>
+                    <button id="clear-sprite" class="small-btn">Clear</button>
+                </div>
+            </div>
+
+            <div class="spell-actions">
+                <button id="save-spell" class="primary-btn">Save Spell</button>
+                <button id="delete-spell" class="danger-btn hidden">Delete</button>
+            </div>
+
+            <div class="spell-list">
+                <h3>My Spells (Drag to equip)</h3>
+                <div id="my-spells"></div>
+            </div>
+
+            <div class="equipped-spells">
+                <h3>Equipped Spells (Keys 1-2-3)</h3>
+                <div id="equipped-slots">
+                    <div class="equip-slot" data-slot="0">Slot 1 (Empty)</div>
+                    <div class="equip-slot" data-slot="1">Slot 2 (Empty)</div>
+                    <div class="equip-slot" data-slot="2">Slot 3 (Empty)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Team Modal -->
+    <div id="team-modal" class="modal hidden">
+        <div class="modal-content team-modal-content">
+            <div class="modal-header">
+                <h2>Teams</h2>
+                <button id="team-modal-close" class="close-btn">&times;</button>
+            </div>
+
+            <div id="current-team-info" class="hidden">
+                <h3>Current Team: <span id="current-team-name"></span></h3>
+                <div id="current-team-color-preview"></div>
+                <button id="leave-team" class="danger-btn">Leave Team</button>
+            </div>
+
+            <div id="team-options">
+                <div class="team-section">
+                    <h3>Create New Team</h3>
+                    <input type="text" id="new-team-name" placeholder="Team Name" maxlength="20">
+                    <div class="team-color-picker">
+                        <label>Team Color:</label>
+                        <input type="color" id="new-team-color" value="#ff0000">
+                    </div>
+                    <button id="create-team" class="primary-btn">Create Team</button>
+                </div>
+
+                <div class="team-section">
+                    <h3>Join Existing Team</h3>
+                    <input type="text" id="join-team-name" placeholder="Team Name">
+                    <button id="join-team" class="primary-btn">Join Team</button>
+                </div>
+            </div>
+
+            <div id="team-error" class="error-msg"></div>
+        </div>
+    </div>
+
+    <!-- Game HUD Buttons -->
+    <div id="hud-buttons" class="hidden">
+        <button id="open-spells-btn" class="hud-btn">Spells</button>
+        <button id="open-teams-btn" class="hud-btn">Teams</button>
+        <button id="logout-btn" class="hud-btn">Logout</button>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>

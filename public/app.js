@@ -11,8 +11,9 @@ const PUNCH_COOLDOWN = 500;
 const MAX_HEALTH = 4;
 const SPAWN_X = WORLD_PIXELS / 2;
 const SPAWN_Y = WORLD_PIXELS / 2;
+const MAX_POINTS = 10;
 
-// Ability constants
+// Default ability constants (for guests/default spells)
 const MISSILE_SPEED = 400;
 const MISSILE_DAMAGE = 1;
 const MISSILE_COOLDOWN = 300;
@@ -22,6 +23,23 @@ const FIREBALL_SPEED = 200;
 const FIREBALL_DAMAGE = 2;
 const FIREBALL_RADIUS = 80;
 const FIREBALL_COOLDOWN = 15000;
+
+// Spell stat mappings
+const SPELL_STATS = {
+    damage: { min: -2, max: 4 }, // -2 = healing
+    aoe: [0, 25, 50, 75, 100], // pixels
+    speed: [200, 250, 300, 350, 400], // px/s
+    cooldown: [2000, 1650, 1300, 950, 600], // ms
+    range: [1500, 2000, 2500, 3000, 3500], // ms lifetime
+    projectileCount: [1, 2, 3, 4],
+    homing: [0, 0.02, 0.05] // turn rate
+};
+
+// Sprite palette
+const SPRITE_PALETTE = [
+    'transparent', '#ff0000', '#ff8800', '#ffff00',
+    '#00ff00', '#00ffff', '#0088ff', '#ff00ff'
+];
 
 // Isometric constants
 const ISO_TILE_WIDTH = 64;
@@ -68,6 +86,17 @@ function playDashSound() { playSound(150, 0.15, 'triangle'); }
 function playFireballSound() { playSound(80, 0.5, 'sawtooth'); }
 function playExplosionSound() { playSound(50, 0.4, 'square'); }
 
+// Account state
+let accountState = {
+    accountId: null,
+    username: null,
+    teamId: null,
+    teamName: null,
+    teamColor: null,
+    spells: [],
+    equippedSpells: [null, null, null]
+};
+
 // Game state
 let player = {
     x: SPAWN_X, y: SPAWN_Y,
@@ -75,7 +104,7 @@ let player = {
     hue: playerHue, facingRight: true, health: MAX_HEALTH,
     lastDir: { x: 1, y: 0 },
     kills: 0, deaths: 0,
-    spellUses: { missile: 0, dash: 0, fireball: 0, punch: 0 }
+    spellUses: {}
 };
 
 let otherPlayers = {};
@@ -84,22 +113,539 @@ let explosions = [];
 let lastUpdateTime = 0;
 let ws = null;
 let connected = false;
+let authenticated = false;
 let showLeaderboard = false;
 let leaderboardData = [];
+let gameStarted = false;
 
-// Cooldowns
+// Cooldowns (per slot)
+let lastSpellTime = [0, 0, 0];
 let lastPunchTime = 0;
-let lastMissileTime = 0;
-let lastDashTime = 0;
-let lastFireballTime = 0;
 
-// Selected ability
-let selectedAbility = 'missile'; // 'missile', 'dash', 'fireball'
+// Selected ability slot (0-2)
+let selectedSlot = 0;
 
 // Input
 const input = { up: false, down: false, left: false, right: false };
 
-// Resize
+// Default spells for guests
+const defaultSpells = [
+    { name: 'Missile', points_damage: 1, points_aoe: 0, points_speed: 2, points_cooldown: 3, points_range: 1, points_projectile_count: 0, points_homing: 0 },
+    { name: 'Dash', isDash: true },
+    { name: 'Fireball', points_damage: 2, points_aoe: 2, points_speed: 0, points_cooldown: 0, points_range: 1, points_projectile_count: 0, points_homing: 0 }
+];
+
+// Sprite editor state
+let spriteEditorState = {
+    pixels: new Array(64).fill(0),
+    selectedColor: 1,
+    painting: false
+};
+
+let editingSpellId = null;
+
+// ============== AUTH UI ==============
+
+const authModal = document.getElementById('auth-modal');
+const authForm = document.getElementById('auth-form');
+const authTitle = document.getElementById('auth-title');
+const authSubmit = document.getElementById('auth-submit');
+const authToggle = document.getElementById('auth-toggle');
+const authError = document.getElementById('auth-error');
+const guestPlay = document.getElementById('guest-play');
+const hudButtons = document.getElementById('hud-buttons');
+
+let isRegistering = false;
+
+authToggle.addEventListener('click', (e) => {
+    e.preventDefault();
+    isRegistering = !isRegistering;
+    authTitle.textContent = isRegistering ? 'Create Account' : 'Login';
+    authSubmit.textContent = isRegistering ? 'Register' : 'Login';
+    authToggle.textContent = isRegistering ? 'Back to Login' : 'Create Account';
+    authError.textContent = '';
+});
+
+authForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const username = document.getElementById('auth-username').value.trim();
+    const password = document.getElementById('auth-password').value;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: isRegistering ? 'register' : 'login',
+            username,
+            password
+        }));
+    }
+});
+
+guestPlay.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'guest_play' }));
+    }
+});
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+    localStorage.removeItem('mage_account_id');
+    localStorage.removeItem('mage_username');
+    location.reload();
+});
+
+// ============== SPELL MODAL ==============
+
+const spellModal = document.getElementById('spell-modal');
+const spriteCanvas = document.getElementById('sprite-canvas');
+const spriteCtx = spriteCanvas.getContext('2d');
+
+document.getElementById('open-spells-btn').addEventListener('click', () => {
+    if (!accountState.accountId) {
+        alert('You must be logged in to create spells');
+        return;
+    }
+    openSpellModal();
+});
+
+document.getElementById('spell-modal-close').addEventListener('click', () => {
+    spellModal.classList.add('hidden');
+});
+
+function openSpellModal() {
+    spellModal.classList.remove('hidden');
+    resetSpellEditor();
+    renderSpellList();
+    renderEquippedSlots();
+    initPalette();
+    renderSpriteCanvas();
+}
+
+function resetSpellEditor() {
+    document.getElementById('spell-name').value = '';
+    document.getElementById('stat-damage').value = 1;
+    document.getElementById('stat-aoe').value = 0;
+    document.getElementById('stat-speed').value = 1;
+    document.getElementById('stat-cooldown').value = 1;
+    document.getElementById('stat-range').value = 1;
+    document.getElementById('stat-multishot').value = 0;
+    document.getElementById('stat-homing').value = 0;
+    spriteEditorState.pixels = new Array(64).fill(0);
+    editingSpellId = null;
+    document.getElementById('delete-spell').classList.add('hidden');
+    updateStatDisplays();
+    updatePointsRemaining();
+}
+
+function loadSpellIntoEditor(spell) {
+    document.getElementById('spell-name').value = spell.name;
+    document.getElementById('stat-damage').value = spell.points_damage;
+    document.getElementById('stat-aoe').value = spell.points_aoe;
+    document.getElementById('stat-speed').value = spell.points_speed;
+    document.getElementById('stat-cooldown').value = spell.points_cooldown;
+    document.getElementById('stat-range').value = spell.points_range;
+    document.getElementById('stat-multishot').value = spell.points_projectile_count;
+    document.getElementById('stat-homing').value = spell.points_homing;
+
+    if (spell.sprite_pixels) {
+        spriteEditorState.pixels = spell.sprite_pixels.split(',').map(Number);
+    } else {
+        spriteEditorState.pixels = new Array(64).fill(0);
+    }
+
+    editingSpellId = spell.id;
+    document.getElementById('delete-spell').classList.remove('hidden');
+    updateStatDisplays();
+    updatePointsRemaining();
+    renderSpriteCanvas();
+}
+
+// Stat sliders
+document.querySelectorAll('.stat-row input[type="range"]').forEach(slider => {
+    slider.addEventListener('input', () => {
+        updateStatDisplays();
+        updatePointsRemaining();
+    });
+});
+
+function updateStatDisplays() {
+    document.querySelectorAll('.stat-row').forEach(row => {
+        const slider = row.querySelector('input[type="range"]');
+        const valueSpan = row.querySelector('.stat-value');
+        if (slider && valueSpan) {
+            valueSpan.textContent = slider.value;
+        }
+    });
+}
+
+function calculatePointsUsed() {
+    const damage = parseInt(document.getElementById('stat-damage').value);
+    const aoe = parseInt(document.getElementById('stat-aoe').value);
+    const speed = parseInt(document.getElementById('stat-speed').value);
+    const cooldown = parseInt(document.getElementById('stat-cooldown').value);
+    const range = parseInt(document.getElementById('stat-range').value);
+    const multishot = parseInt(document.getElementById('stat-multishot').value);
+    const homing = parseInt(document.getElementById('stat-homing').value);
+
+    return damage + aoe + speed + cooldown + range + multishot + homing;
+}
+
+function updatePointsRemaining() {
+    const used = calculatePointsUsed();
+    const remaining = MAX_POINTS - used;
+    const container = document.getElementById('points-remaining');
+    container.querySelector('span').textContent = remaining;
+
+    if (remaining < 0) {
+        container.classList.add('over-budget');
+    } else {
+        container.classList.remove('over-budget');
+    }
+}
+
+// Palette
+function initPalette() {
+    const palette = document.getElementById('color-palette');
+    palette.innerHTML = '';
+    SPRITE_PALETTE.forEach((color, i) => {
+        const div = document.createElement('div');
+        div.className = 'palette-color' + (i === spriteEditorState.selectedColor ? ' selected' : '');
+        if (i === 0) {
+            div.classList.add('transparent-color');
+        } else {
+            div.style.background = color;
+        }
+        div.addEventListener('click', () => {
+            document.querySelectorAll('.palette-color').forEach(c => c.classList.remove('selected'));
+            div.classList.add('selected');
+            spriteEditorState.selectedColor = i;
+        });
+        palette.appendChild(div);
+    });
+}
+
+// Sprite canvas
+function renderSpriteCanvas() {
+    const pixelSize = 20;
+    spriteCtx.fillStyle = '#0d0d1a';
+    spriteCtx.fillRect(0, 0, 160, 160);
+
+    // Draw checkerboard for transparency
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const i = y * 8 + x;
+            const colorIndex = spriteEditorState.pixels[i];
+
+            if (colorIndex === 0) {
+                // Checkerboard pattern
+                spriteCtx.fillStyle = (x + y) % 2 === 0 ? '#222' : '#333';
+            } else {
+                spriteCtx.fillStyle = SPRITE_PALETTE[colorIndex];
+            }
+            spriteCtx.fillRect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
+        }
+    }
+
+    // Grid lines
+    spriteCtx.strokeStyle = '#444';
+    spriteCtx.lineWidth = 1;
+    for (let i = 0; i <= 8; i++) {
+        spriteCtx.beginPath();
+        spriteCtx.moveTo(i * pixelSize, 0);
+        spriteCtx.lineTo(i * pixelSize, 160);
+        spriteCtx.stroke();
+        spriteCtx.beginPath();
+        spriteCtx.moveTo(0, i * pixelSize);
+        spriteCtx.lineTo(160, i * pixelSize);
+        spriteCtx.stroke();
+    }
+}
+
+spriteCanvas.addEventListener('mousedown', (e) => {
+    spriteEditorState.painting = true;
+    paintPixel(e);
+});
+
+spriteCanvas.addEventListener('mousemove', (e) => {
+    if (spriteEditorState.painting) paintPixel(e);
+});
+
+spriteCanvas.addEventListener('mouseup', () => {
+    spriteEditorState.painting = false;
+});
+
+spriteCanvas.addEventListener('mouseleave', () => {
+    spriteEditorState.painting = false;
+});
+
+function paintPixel(e) {
+    const rect = spriteCanvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) / 20);
+    const y = Math.floor((e.clientY - rect.top) / 20);
+    if (x >= 0 && x < 8 && y >= 0 && y < 8) {
+        spriteEditorState.pixels[y * 8 + x] = spriteEditorState.selectedColor;
+        renderSpriteCanvas();
+    }
+}
+
+document.getElementById('clear-sprite').addEventListener('click', () => {
+    spriteEditorState.pixels = new Array(64).fill(0);
+    renderSpriteCanvas();
+});
+
+// Save spell
+document.getElementById('save-spell').addEventListener('click', () => {
+    const name = document.getElementById('spell-name').value.trim();
+    if (!name) {
+        alert('Please enter a spell name');
+        return;
+    }
+
+    const pointsUsed = calculatePointsUsed();
+    if (pointsUsed > MAX_POINTS) {
+        alert('Too many points used!');
+        return;
+    }
+
+    const spellData = {
+        name,
+        points: {
+            damage: parseInt(document.getElementById('stat-damage').value),
+            aoe: parseInt(document.getElementById('stat-aoe').value),
+            speed: parseInt(document.getElementById('stat-speed').value),
+            cooldown: parseInt(document.getElementById('stat-cooldown').value),
+            range: parseInt(document.getElementById('stat-range').value),
+            projectileCount: parseInt(document.getElementById('stat-multishot').value),
+            homing: parseInt(document.getElementById('stat-homing').value)
+        },
+        sprite: {
+            size: 8,
+            pixels: spriteEditorState.pixels.join(','),
+            palette: SPRITE_PALETTE.join(',')
+        }
+    };
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        if (editingSpellId) {
+            ws.send(JSON.stringify({
+                type: 'update_spell',
+                accountId: accountState.accountId,
+                spellId: editingSpellId,
+                ...spellData
+            }));
+        } else {
+            ws.send(JSON.stringify({
+                type: 'create_spell',
+                accountId: accountState.accountId,
+                ...spellData
+            }));
+        }
+    }
+});
+
+document.getElementById('delete-spell').addEventListener('click', () => {
+    if (!editingSpellId) return;
+    if (!confirm('Delete this spell?')) return;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'delete_spell',
+            accountId: accountState.accountId,
+            spellId: editingSpellId
+        }));
+    }
+    resetSpellEditor();
+});
+
+function renderSpellList() {
+    const container = document.getElementById('my-spells');
+    container.innerHTML = '';
+
+    accountState.spells.forEach(spell => {
+        const div = document.createElement('div');
+        div.className = 'spell-item' + (editingSpellId === spell.id ? ' selected' : '');
+
+        // Mini sprite preview
+        const miniCanvas = document.createElement('canvas');
+        miniCanvas.width = 24;
+        miniCanvas.height = 24;
+        renderSpellSprite(miniCanvas, spell, 3);
+        div.appendChild(miniCanvas);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'spell-item-name';
+        nameSpan.textContent = spell.name;
+        div.appendChild(nameSpan);
+
+        div.addEventListener('click', () => {
+            loadSpellIntoEditor(spell);
+            document.querySelectorAll('.spell-item').forEach(s => s.classList.remove('selected'));
+            div.classList.add('selected');
+        });
+
+        // Drag to equip
+        div.draggable = true;
+        div.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('spellId', spell.id);
+        });
+
+        container.appendChild(div);
+    });
+}
+
+function renderEquippedSlots() {
+    const slots = document.querySelectorAll('.equip-slot');
+    slots.forEach((slot, i) => {
+        const spell = accountState.equippedSpells[i];
+        slot.innerHTML = '';
+        slot.classList.remove('filled');
+
+        if (spell) {
+            slot.classList.add('filled');
+
+            const miniCanvas = document.createElement('canvas');
+            miniCanvas.width = 24;
+            miniCanvas.height = 24;
+            renderSpellSprite(miniCanvas, spell, 3);
+            slot.appendChild(miniCanvas);
+
+            const nameDiv = document.createElement('div');
+            nameDiv.textContent = `[${i + 1}] ${spell.name}`;
+            slot.appendChild(nameDiv);
+        } else {
+            slot.textContent = `Slot ${i + 1} (Empty)`;
+        }
+    });
+
+    // Drop handlers
+    slots.forEach((slot, i) => {
+        slot.addEventListener('dragover', (e) => e.preventDefault());
+        slot.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const spellId = e.dataTransfer.getData('spellId');
+            if (spellId && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'equip_spell',
+                    accountId: accountState.accountId,
+                    spellId,
+                    slot: i
+                }));
+            }
+        });
+
+        // Click to unequip
+        slot.addEventListener('dblclick', () => {
+            if (accountState.equippedSpells[i] && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'unequip_spell',
+                    accountId: accountState.accountId,
+                    slot: i
+                }));
+            }
+        });
+    });
+}
+
+function renderSpellSprite(canvas, spell, pixelSize) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!spell.sprite_pixels) return;
+
+    const pixels = spell.sprite_pixels.split(',').map(Number);
+    const palette = spell.sprite_palette ? spell.sprite_palette.split(',') : SPRITE_PALETTE;
+
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const colorIndex = pixels[y * 8 + x];
+            if (colorIndex !== 0) {
+                ctx.fillStyle = palette[colorIndex] || SPRITE_PALETTE[colorIndex];
+                ctx.fillRect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
+            }
+        }
+    }
+}
+
+// ============== TEAM MODAL ==============
+
+const teamModal = document.getElementById('team-modal');
+
+document.getElementById('open-teams-btn').addEventListener('click', () => {
+    if (!accountState.accountId) {
+        alert('You must be logged in to join teams');
+        return;
+    }
+    openTeamModal();
+});
+
+document.getElementById('team-modal-close').addEventListener('click', () => {
+    teamModal.classList.add('hidden');
+});
+
+function openTeamModal() {
+    teamModal.classList.remove('hidden');
+    updateTeamUI();
+}
+
+function updateTeamUI() {
+    const currentInfo = document.getElementById('current-team-info');
+    const options = document.getElementById('team-options');
+
+    if (accountState.teamId) {
+        currentInfo.classList.remove('hidden');
+        document.getElementById('current-team-name').textContent = accountState.teamName;
+        document.getElementById('current-team-color-preview').style.background = accountState.teamColor;
+    } else {
+        currentInfo.classList.add('hidden');
+    }
+}
+
+document.getElementById('create-team').addEventListener('click', () => {
+    const name = document.getElementById('new-team-name').value.trim();
+    const color = document.getElementById('new-team-color').value;
+
+    if (!name) {
+        document.getElementById('team-error').textContent = 'Please enter a team name';
+        return;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'create_team',
+            accountId: accountState.accountId,
+            name,
+            color
+        }));
+    }
+});
+
+document.getElementById('join-team').addEventListener('click', () => {
+    const teamName = document.getElementById('join-team-name').value.trim();
+
+    if (!teamName) {
+        document.getElementById('team-error').textContent = 'Please enter a team name';
+        return;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'join_team',
+            accountId: accountState.accountId,
+            teamName
+        }));
+    }
+});
+
+document.getElementById('leave-team').addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'leave_team',
+            accountId: accountState.accountId
+        }));
+    }
+});
+
+// ============== RESIZE & INPUT ==============
+
 function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -107,17 +653,19 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Input handling
 window.addEventListener('keydown', (e) => {
+    if (!gameStarted) return;
+    if (document.activeElement.tagName === 'INPUT') return;
+
     switch (e.key.toLowerCase()) {
         case 'w': case 'arrowup': input.up = true; break;
         case 's': case 'arrowdown': input.down = true; break;
         case 'a': case 'arrowleft': input.left = true; break;
         case 'd': case 'arrowright': input.right = true; break;
         case ' ': tryPunch(); e.preventDefault(); break;
-        case '1': selectedAbility = 'missile'; break;
-        case '2': selectedAbility = 'dash'; break;
-        case '3': selectedAbility = 'fireball'; break;
+        case '1': selectedSlot = 0; break;
+        case '2': selectedSlot = 1; break;
+        case '3': selectedSlot = 2; break;
         case 'tab':
             showLeaderboard = true;
             requestLeaderboard();
@@ -142,16 +690,16 @@ function requestLeaderboard() {
     }
 }
 
-// Click to use ability
 canvas.addEventListener('click', (e) => {
-    // Get click direction
+    if (!gameStarted) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left - canvas.width / 2;
     const clickY = e.clientY - rect.top - canvas.height / 2;
     useAbility(clickX, clickY);
 });
 
-// Coordinate helpers
+// ============== COORDINATE HELPERS ==============
+
 function worldToIso(x, y) {
     return {
         x: (x - y) * (ISO_TILE_WIDTH / TILE_SIZE / 2),
@@ -180,23 +728,19 @@ function getWrappedDistance(x1, y1, x2, y2) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Rectangular hitbox collision (checks if two rectangles overlap)
 const PLAYER_HITBOX_WIDTH = 40;
 const PLAYER_HITBOX_HEIGHT = 40;
 
 function checkRectCollision(x1, y1, x2, y2, range) {
     let dx = x2 - x1;
     let dy = y2 - y1;
-    // Handle wrapping
     if (dx > WORLD_PIXELS / 2) dx -= WORLD_PIXELS;
     if (dx < -WORLD_PIXELS / 2) dx += WORLD_PIXELS;
     if (dy > WORLD_PIXELS / 2) dy -= WORLD_PIXELS;
     if (dy < -WORLD_PIXELS / 2) dy += WORLD_PIXELS;
-    // Check if within rectangular range
     return Math.abs(dx) < range && Math.abs(dy) < range;
 }
 
-// Find nearest player in range (using rectangular hitbox)
 function findNearestPlayer(range) {
     let nearest = null, nearestDist = Infinity;
     for (const [id, p] of Object.entries(otherPlayers)) {
@@ -208,23 +752,57 @@ function findNearestPlayer(range) {
     return nearest;
 }
 
-// Punch (melee)
+// ============== COMBAT ==============
+
 function tryPunch() {
     const now = Date.now();
     if (now - lastPunchTime < PUNCH_COOLDOWN) return;
     const targetId = findNearestPlayer(ATTACK_RANGE);
     if (!targetId) return;
     lastPunchTime = now;
-    player.spellUses.punch++;
+    player.spellUses.punch = (player.spellUses.punch || 0) + 1;
     playHitSound();
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "attack", targetId, damage: 1, spell: 'punch' }));
     }
 }
 
-// Use selected ability
+function getSpellForSlot(slot) {
+    // For logged in users with equipped spells
+    if (accountState.accountId && accountState.equippedSpells[slot]) {
+        return accountState.equippedSpells[slot];
+    }
+    // Default spells for guests
+    return defaultSpells[slot];
+}
+
+function getSpellStats(spell) {
+    if (!spell) return null;
+    if (spell.isDash) return { isDash: true, cooldown: DASH_COOLDOWN };
+
+    return {
+        damage: spell.points_damage,
+        aoe: SPELL_STATS.aoe[spell.points_aoe],
+        speed: SPELL_STATS.speed[spell.points_speed],
+        cooldown: SPELL_STATS.cooldown[spell.points_cooldown],
+        range: SPELL_STATS.range[spell.points_range],
+        projectileCount: SPELL_STATS.projectileCount[spell.points_projectile_count],
+        homing: SPELL_STATS.homing[spell.points_homing],
+        sprite_pixels: spell.sprite_pixels,
+        sprite_palette: spell.sprite_palette,
+        name: spell.name
+    };
+}
+
 function useAbility(clickX, clickY) {
     const now = Date.now();
+    const spell = getSpellForSlot(selectedSlot);
+    if (!spell) return;
+
+    const stats = getSpellStats(spell);
+    if (!stats) return;
+
+    if (now - lastSpellTime[selectedSlot] < stats.cooldown) return;
 
     // Calculate direction from click
     let dirX = clickX, dirY = clickY;
@@ -232,57 +810,69 @@ function useAbility(clickX, clickY) {
     if (len > 0) { dirX /= len; dirY /= len; }
     else { dirX = player.lastDir.x; dirY = player.lastDir.y; }
 
-    // Convert screen direction to world direction (reverse isometric)
+    // Convert screen direction to world direction
     const worldDirX = dirX + dirY * 2;
     const worldDirY = -dirX + dirY * 2;
     const wlen = Math.sqrt(worldDirX * worldDirX + worldDirY * worldDirY);
     const normDirX = worldDirX / wlen;
     const normDirY = worldDirY / wlen;
 
-    switch (selectedAbility) {
-        case 'missile':
-            if (now - lastMissileTime < MISSILE_COOLDOWN) return;
-            lastMissileTime = now;
-            player.spellUses.missile++;
-            playShootSound();
-            spawnProjectile('missile', normDirX, normDirY);
-            break;
+    if (stats.isDash) {
+        lastSpellTime[selectedSlot] = now;
+        player.spellUses.dash = (player.spellUses.dash || 0) + 1;
+        playDashSound();
+        player.x = wrapPosition(player.x + normDirX * DASH_DISTANCE);
+        player.y = wrapPosition(player.y + normDirY * DASH_DISTANCE);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "spell_use", spell: 'dash' }));
+        }
+        return;
+    }
 
-        case 'dash':
-            if (now - lastDashTime < DASH_COOLDOWN) return;
-            lastDashTime = now;
-            player.spellUses.dash++;
-            playDashSound();
-            player.x = wrapPosition(player.x + normDirX * DASH_DISTANCE);
-            player.y = wrapPosition(player.y + normDirY * DASH_DISTANCE);
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "spell_use", spell: 'dash' }));
-            }
-            break;
+    lastSpellTime[selectedSlot] = now;
+    const spellName = spell.name || 'custom';
+    player.spellUses[spellName] = (player.spellUses[spellName] || 0) + 1;
 
-        case 'fireball':
-            if (now - lastFireballTime < FIREBALL_COOLDOWN) return;
-            lastFireballTime = now;
-            player.spellUses.fireball++;
-            playFireballSound();
-            spawnProjectile('fireball', normDirX, normDirY);
-            break;
+    if (stats.aoe > 0) {
+        playFireballSound();
+    } else {
+        playShootSound();
+    }
+
+    // Spawn projectiles (multishot)
+    const count = stats.projectileCount;
+    const spreadAngle = count > 1 ? 0.3 : 0; // 30 degrees total spread
+
+    for (let i = 0; i < count; i++) {
+        let angle = Math.atan2(normDirY, normDirX);
+        if (count > 1) {
+            angle += spreadAngle * (i / (count - 1) - 0.5);
+        }
+
+        const projDirX = Math.cos(angle);
+        const projDirY = Math.sin(angle);
+
+        spawnProjectile(stats, projDirX, projDirY);
     }
 }
 
-// Spawn projectile
-function spawnProjectile(projType, dirX, dirY) {
+function spawnProjectile(stats, dirX, dirY) {
     const proj = {
-        id: `${playerId}_${Date.now()}`,
-        projType,
+        id: `${playerId}_${Date.now()}_${Math.random()}`,
         x: player.x,
         y: player.y,
         dirX, dirY,
         ownerId: playerId,
-        speed: projType === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED,
-        damage: projType === 'fireball' ? FIREBALL_DAMAGE : MISSILE_DAMAGE,
+        speed: stats.speed,
+        damage: stats.damage,
+        aoe: stats.aoe,
+        homing: stats.homing,
+        range: stats.range,
         hue: playerHue,
-        born: Date.now()
+        born: Date.now(),
+        sprite_pixels: stats.sprite_pixels,
+        sprite_palette: stats.sprite_palette,
+        spellName: stats.name
     };
     projectiles.push(proj);
 
@@ -291,46 +881,93 @@ function spawnProjectile(projType, dirX, dirY) {
     }
 }
 
-// Update projectiles
+// ============== PROJECTILE UPDATE ==============
+
 function updateProjectiles(dt) {
     const now = Date.now();
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
         const p = projectiles[i];
 
+        // Homing behavior
+        if (p.homing > 0 && p.ownerId === playerId) {
+            let nearestDist = Infinity;
+            let nearestTarget = null;
+
+            for (const [id, other] of Object.entries(otherPlayers)) {
+                const dist = getWrappedDistance(p.x, p.y, other.x, other.y);
+                if (dist < nearestDist && dist < 300) {
+                    nearestDist = dist;
+                    nearestTarget = other;
+                }
+            }
+
+            if (nearestTarget) {
+                let targetDx = nearestTarget.x - p.x;
+                let targetDy = nearestTarget.y - p.y;
+                if (targetDx > WORLD_PIXELS / 2) targetDx -= WORLD_PIXELS;
+                if (targetDx < -WORLD_PIXELS / 2) targetDx += WORLD_PIXELS;
+                if (targetDy > WORLD_PIXELS / 2) targetDy -= WORLD_PIXELS;
+                if (targetDy < -WORLD_PIXELS / 2) targetDy += WORLD_PIXELS;
+
+                const targetAngle = Math.atan2(targetDy, targetDx);
+                const currentAngle = Math.atan2(p.dirY, p.dirX);
+
+                let angleDiff = targetAngle - currentAngle;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                const turnAmount = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), p.homing);
+                const newAngle = currentAngle + turnAmount;
+
+                p.dirX = Math.cos(newAngle);
+                p.dirY = Math.sin(newAngle);
+            }
+        }
+
         // Move
         p.x = wrapPosition(p.x + p.dirX * p.speed * dt);
         p.y = wrapPosition(p.y + p.dirY * p.speed * dt);
 
-        // Check lifetime (3 seconds max)
-        if (now - p.born > 3000) {
+        // Check lifetime
+        const lifetime = p.range || 3000;
+        if (now - p.born > lifetime) {
             projectiles.splice(i, 1);
             continue;
         }
 
-        // Check collision with players (only check our own projectiles)
+        // Check collision (only our projectiles)
         if (p.ownerId === playerId) {
-            for (const [id, other] of Object.entries(otherPlayers)) {
-                const hitRange = p.projType === 'fireball' ? 35 : 25;
+            const hitRange = (p.aoe > 0) ? 35 : 25;
 
+            for (const [id, other] of Object.entries(otherPlayers)) {
                 if (checkRectCollision(p.x, p.y, other.x, other.y, hitRange)) {
-                    if (p.projType === 'fireball') {
-                        // Explosion damages all nearby
-                        createExplosion(p.x, p.y, p.hue);
+                    if (p.aoe > 0) {
+                        // Explosion
+                        createExplosion(p.x, p.y, p.hue, p.aoe);
                         playExplosionSound();
 
-                        // Damage all players in radius
                         for (const [eid, eplayer] of Object.entries(otherPlayers)) {
-                            if (checkRectCollision(p.x, p.y, eplayer.x, eplayer.y, FIREBALL_RADIUS)) {
+                            if (checkRectCollision(p.x, p.y, eplayer.x, eplayer.y, p.aoe)) {
                                 if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({ type: "attack", targetId: eid, damage: FIREBALL_DAMAGE, spell: 'fireball' }));
+                                    ws.send(JSON.stringify({
+                                        type: "attack",
+                                        targetId: eid,
+                                        damage: p.damage,
+                                        spell: p.spellName || 'custom'
+                                    }));
                                 }
                             }
                         }
                     } else {
                         // Direct hit
                         if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ type: "attack", targetId: id, damage: p.damage, spell: 'missile' }));
+                            ws.send(JSON.stringify({
+                                type: "attack",
+                                targetId: id,
+                                damage: p.damage,
+                                spell: p.spellName || 'custom'
+                            }));
                         }
                     }
                     projectiles.splice(i, 1);
@@ -341,23 +978,22 @@ function updateProjectiles(dt) {
     }
 }
 
-// Create explosion effect
-function createExplosion(x, y, hue) {
-    explosions.push({ x, y, hue, born: Date.now(), radius: 0 });
+function createExplosion(x, y, hue, radius = FIREBALL_RADIUS) {
+    explosions.push({ x, y, hue, born: Date.now(), radius: 0, maxRadius: radius });
 }
 
-// Update explosions
 function updateExplosions() {
     const now = Date.now();
     for (let i = explosions.length - 1; i >= 0; i--) {
         const e = explosions[i];
         const age = now - e.born;
-        e.radius = (age / 300) * FIREBALL_RADIUS;
+        e.radius = (age / 300) * (e.maxRadius || FIREBALL_RADIUS);
         if (age > 300) explosions.splice(i, 1);
     }
 }
 
-// Update player
+// ============== PLAYER UPDATE ==============
+
 function updatePlayer(dt) {
     let vx = 0, vy = 0;
     if (input.up) { vx -= 1; vy -= 1; }
@@ -377,114 +1013,46 @@ function updatePlayer(dt) {
     if (vx < 0) player.facingRight = false;
 }
 
-// Send position
 function sendPosition() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const now = Date.now();
     if (now - lastUpdateTime < UPDATE_RATE) return;
     lastUpdateTime = now;
     ws.send(JSON.stringify({
-        type: "update", x: player.x, y: player.y, hue: player.hue, facingRight: player.facingRight
+        type: "update",
+        x: player.x,
+        y: player.y,
+        hue: player.hue,
+        facingRight: player.facingRight,
+        username: accountState.username,
+        accountId: accountState.accountId,
+        teamId: accountState.teamId,
+        teamColor: accountState.teamColor,
+        teamName: accountState.teamName,
+        equippedSpells: accountState.equippedSpells
     }));
 }
 
-// Connect
+// ============== CONNECT ==============
+
 function connectToServer() {
     const wsUrl = 'wss://multiplayer-test.averyopela1.workers.dev/ws?room=default';
     playerCountEl.textContent = 'Connecting...';
     ws = new WebSocket(wsUrl);
 
-    ws.onopen = () => { connected = true; sendPosition(); };
+    ws.onopen = () => {
+        connected = true;
+        // Check for saved session
+        const savedAccountId = localStorage.getItem('mage_account_id');
+        if (savedAccountId) {
+            ws.send(JSON.stringify({ type: 'get_account_data', accountId: savedAccountId }));
+        }
+    };
 
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
-            switch (data.type) {
-                case 'init':
-                    playerId = data.yourId;
-                    player.health = MAX_HEALTH;
-                    for (const [id, pData] of Object.entries(data.players)) {
-                        if (id !== playerId) {
-                            otherPlayers[id] = {
-                                ...pData,
-                                color: `hsl(${pData.hue}, 70%, 50%)`,
-                                colorDark: `hsl(${pData.hue}, 70%, 35%)`,
-                                colorLight: `hsl(${pData.hue}, 70%, 65%)`,
-                                health: pData.health || MAX_HEALTH
-                            };
-                        }
-                    }
-                    updatePlayerCount();
-                    break;
-                case 'player_update':
-                    if (data.id !== playerId) {
-                        const isNew = !otherPlayers[data.id];
-                        otherPlayers[data.id] = {
-                            x: data.x, y: data.y, hue: data.hue, facingRight: data.facingRight,
-                            color: `hsl(${data.hue}, 70%, 50%)`,
-                            colorDark: `hsl(${data.hue}, 70%, 35%)`,
-                            colorLight: `hsl(${data.hue}, 70%, 65%)`,
-                            health: data.health || MAX_HEALTH,
-                            lastSeen: Date.now()
-                        };
-                        if (isNew) updatePlayerCount();
-                    }
-                    break;
-                case 'player_joined':
-                    updatePlayerCount();
-                    break;
-                case 'player_left':
-                    delete otherPlayers[data.id];
-                    updatePlayerCount();
-                    break;
-                case 'hit':
-                    if (data.targetId === playerId) {
-                        player.health -= (data.damage || 1);
-                        playHitSound();
-                        if (player.health <= 0) {
-                            playDeathSound();
-                            player.deaths++;
-                            player.x = SPAWN_X; player.y = SPAWN_Y; player.health = MAX_HEALTH;
-                        }
-                    }
-                    if (otherPlayers[data.targetId]) {
-                        otherPlayers[data.targetId].health -= (data.damage || 1);
-                        if (otherPlayers[data.targetId].health <= 0) {
-                            playDeathSound();
-                            otherPlayers[data.targetId].health = MAX_HEALTH;
-                        }
-                    }
-                    break;
-                case 'kill':
-                    if (data.killerId === playerId) {
-                        player.kills = data.killerKills;
-                    }
-                    if (data.victimId === playerId) {
-                        player.deaths = data.victimDeaths;
-                    }
-                    break;
-                case 'leaderboard':
-                    leaderboardData = data.players || [];
-                    break;
-                case 'respawn':
-                    if (data.id === playerId) {
-                        player.x = data.x; player.y = data.y; player.health = MAX_HEALTH;
-                    } else if (otherPlayers[data.id]) {
-                        otherPlayers[data.id].x = data.x;
-                        otherPlayers[data.id].y = data.y;
-                        otherPlayers[data.id].health = MAX_HEALTH;
-                    }
-                    break;
-                case 'projectile':
-                    if (data.ownerId !== playerId) {
-                        data.born = Date.now();
-                        if (!data.speed) {
-                            data.speed = data.projType === 'fireball' ? FIREBALL_SPEED : MISSILE_SPEED;
-                        }
-                        projectiles.push(data);
-                    }
-                    break;
-            }
+            handleServerMessage(data);
         } catch (e) { console.error('Parse error:', e); }
     };
 
@@ -496,14 +1064,194 @@ function connectToServer() {
     ws.onerror = () => {};
 }
 
+function handleServerMessage(data) {
+    switch (data.type) {
+        case 'init':
+            playerId = data.yourId;
+            player.health = MAX_HEALTH;
+            for (const [id, pData] of Object.entries(data.players)) {
+                if (id !== playerId) {
+                    otherPlayers[id] = {
+                        ...pData,
+                        color: `hsl(${pData.hue}, 70%, 50%)`,
+                        colorDark: `hsl(${pData.hue}, 70%, 35%)`,
+                        colorLight: `hsl(${pData.hue}, 70%, 65%)`,
+                        health: pData.health || MAX_HEALTH
+                    };
+                }
+            }
+            updatePlayerCount();
+            break;
+
+        case 'auth_success':
+            accountState.accountId = data.accountId;
+            accountState.username = data.username;
+            accountState.teamId = data.teamId;
+            accountState.teamName = data.teamName;
+            accountState.teamColor = data.teamColor;
+            accountState.spells = data.spells || [];
+            accountState.equippedSpells = data.equippedSpells || [null, null, null];
+
+            if (data.accountId) {
+                localStorage.setItem('mage_account_id', data.accountId);
+                localStorage.setItem('mage_username', data.username);
+            }
+
+            authenticated = true;
+            gameStarted = true;
+            authModal.classList.add('hidden');
+            hudButtons.classList.remove('hidden');
+            sendPosition();
+            break;
+
+        case 'auth_error':
+            authError.textContent = data.message;
+            break;
+
+        case 'account_data':
+            if (data.data) {
+                accountState.accountId = data.data.id;
+                accountState.username = data.data.username;
+                accountState.teamId = data.data.team_id;
+                accountState.teamName = data.data.teamName;
+                accountState.teamColor = data.data.teamColor;
+                accountState.spells = data.data.spells || [];
+                accountState.equippedSpells = data.data.equippedSpells || [null, null, null];
+
+                authenticated = true;
+                gameStarted = true;
+                authModal.classList.add('hidden');
+                hudButtons.classList.remove('hidden');
+                sendPosition();
+            }
+            break;
+
+        case 'spells_updated':
+            accountState.spells = data.spells || [];
+            if (data.equippedSpells) {
+                accountState.equippedSpells = data.equippedSpells;
+            }
+            renderSpellList();
+            renderEquippedSlots();
+            resetSpellEditor();
+            break;
+
+        case 'equipped_updated':
+            accountState.equippedSpells = data.equippedSpells || [null, null, null];
+            renderEquippedSlots();
+            break;
+
+        case 'spell_error':
+            alert(data.message);
+            break;
+
+        case 'team_joined':
+            accountState.teamId = data.teamId;
+            accountState.teamName = data.teamName;
+            accountState.teamColor = data.teamColor;
+            document.getElementById('team-error').textContent = '';
+            updateTeamUI();
+            break;
+
+        case 'team_left':
+            accountState.teamId = null;
+            accountState.teamName = null;
+            accountState.teamColor = null;
+            updateTeamUI();
+            break;
+
+        case 'team_error':
+            document.getElementById('team-error').textContent = data.message;
+            break;
+
+        case 'player_update':
+            if (data.id !== playerId) {
+                const isNew = !otherPlayers[data.id];
+                otherPlayers[data.id] = {
+                    x: data.x, y: data.y, hue: data.hue, facingRight: data.facingRight,
+                    color: `hsl(${data.hue}, 70%, 50%)`,
+                    colorDark: `hsl(${data.hue}, 70%, 35%)`,
+                    colorLight: `hsl(${data.hue}, 70%, 65%)`,
+                    health: data.health || MAX_HEALTH,
+                    lastSeen: Date.now(),
+                    username: data.username,
+                    teamId: data.teamId,
+                    teamColor: data.teamColor,
+                    teamName: data.teamName,
+                    equippedSpells: data.equippedSpells
+                };
+                if (isNew) updatePlayerCount();
+            }
+            break;
+
+        case 'player_joined':
+            updatePlayerCount();
+            break;
+
+        case 'player_left':
+            delete otherPlayers[data.id];
+            updatePlayerCount();
+            break;
+
+        case 'hit':
+            if (data.targetId === playerId) {
+                player.health -= (data.damage || 1);
+                playHitSound();
+                if (player.health <= 0) {
+                    playDeathSound();
+                    player.deaths++;
+                    player.x = SPAWN_X; player.y = SPAWN_Y; player.health = MAX_HEALTH;
+                }
+            }
+            if (otherPlayers[data.targetId]) {
+                otherPlayers[data.targetId].health -= (data.damage || 1);
+                if (otherPlayers[data.targetId].health <= 0) {
+                    playDeathSound();
+                    otherPlayers[data.targetId].health = MAX_HEALTH;
+                }
+            }
+            break;
+
+        case 'kill':
+            if (data.killerId === playerId) {
+                player.kills = data.killerKills;
+            }
+            if (data.victimId === playerId) {
+                player.deaths = data.victimDeaths;
+            }
+            break;
+
+        case 'leaderboard':
+            leaderboardData = data.players || [];
+            break;
+
+        case 'respawn':
+            if (data.id === playerId) {
+                player.x = data.x; player.y = data.y; player.health = MAX_HEALTH;
+            } else if (otherPlayers[data.id]) {
+                otherPlayers[data.id].x = data.x;
+                otherPlayers[data.id].y = data.y;
+                otherPlayers[data.id].health = MAX_HEALTH;
+            }
+            break;
+
+        case 'projectile':
+            if (data.ownerId !== playerId) {
+                data.born = Date.now();
+                if (!data.speed) data.speed = 300;
+                projectiles.push(data);
+            }
+            break;
+    }
+}
+
 function updatePlayerCount() {
     playerCountEl.textContent = `Players: ${Object.keys(otherPlayers).length + 1}`;
 }
 
-// Clean up stale players client-side
 function cleanupStalePlayers() {
     const now = Date.now();
-    const staleTimeout = 5000; // 5 seconds
+    const staleTimeout = 5000;
     let removed = false;
 
     for (const [id, p] of Object.entries(otherPlayers)) {
@@ -516,7 +1264,8 @@ function cleanupStalePlayers() {
     if (removed) updatePlayerCount();
 }
 
-// Pre-render world
+// ============== RENDERING ==============
+
 function prerenderWorld() {
     const tilesX = TILES_PER_CHUNK * WORLD_SIZE;
     const tilesY = TILES_PER_CHUNK * WORLD_SIZE;
@@ -598,7 +1347,28 @@ function drawHealthBar(screenX, screenY, health, isLocal) {
     ctx.strokeRect(screenX - barWidth / 2, y, barWidth, barHeight);
 }
 
-function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, cameraIsoY) {
+function drawUsername(screenX, screenY, username, teamColor) {
+    if (!username) return;
+
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+
+    // Team color indicator
+    if (teamColor) {
+        ctx.fillStyle = teamColor;
+        ctx.fillRect(screenX - ctx.measureText(username).width / 2 - 4, screenY - 62, ctx.measureText(username).width + 8, 16);
+        ctx.fillStyle = '#fff';
+    } else {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(screenX - ctx.measureText(username).width / 2 - 2, screenY - 62, ctx.measureText(username).width + 4, 14);
+        ctx.fillStyle = '#fff';
+    }
+
+    ctx.fillText(username, screenX, screenY - 50);
+    ctx.textAlign = 'left';
+}
+
+function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, cameraIsoY, username, teamColor) {
     const centerX = canvas.width / 2, centerY = canvas.height / 2;
     const iso = worldToIso(worldX, worldY);
     const screenX = centerX + iso.x - cameraIsoX;
@@ -606,10 +1376,21 @@ function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, came
     if (screenX < -50 || screenX > canvas.width + 50 || screenY < -50 || screenY > canvas.height + 50) return;
 
     const size = 20, height = 30;
+
+    // Shadow
     ctx.beginPath();
     ctx.ellipse(screenX, screenY + 5, size / 2, size / 4, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fill();
+
+    // Team ring
+    if (teamColor) {
+        ctx.beginPath();
+        ctx.ellipse(screenX, screenY + 5, size / 2 + 4, size / 4 + 2, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = teamColor;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
 
     ctx.strokeStyle = isLocal ? '#fff' : 'rgba(255,255,255,0.3)';
     ctx.lineWidth = isLocal ? 2 : 1;
@@ -642,6 +1423,7 @@ function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, came
     ctx.fill(); ctx.stroke();
 
     drawHealthBar(screenX, screenY, health, isLocal);
+    drawUsername(screenX, screenY, username, teamColor);
 }
 
 function drawProjectiles(cameraIsoX, cameraIsoY) {
@@ -652,8 +1434,27 @@ function drawProjectiles(cameraIsoX, cameraIsoY) {
         const screenX = centerX + iso.x - cameraIsoX;
         const screenY = centerY + iso.y - cameraIsoY;
 
-        if (p.projType === 'fireball') {
-            // Draw fireball (larger, orange)
+        // Custom sprite
+        if (p.sprite_pixels) {
+            const pixels = p.sprite_pixels.split(',').map(Number);
+            const palette = p.sprite_palette ? p.sprite_palette.split(',') : SPRITE_PALETTE;
+            const pixelSize = 2;
+
+            for (let y = 0; y < 8; y++) {
+                for (let x = 0; x < 8; x++) {
+                    const colorIndex = pixels[y * 8 + x];
+                    if (colorIndex !== 0) {
+                        ctx.fillStyle = palette[colorIndex] || SPRITE_PALETTE[colorIndex];
+                        ctx.fillRect(
+                            screenX - 8 + x * pixelSize,
+                            screenY - 23 + y * pixelSize,
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+        } else if (p.aoe > 0) {
+            // Fireball-like
             ctx.beginPath();
             ctx.arc(screenX, screenY - 15, 12, 0, Math.PI * 2);
             const grad = ctx.createRadialGradient(screenX, screenY - 15, 0, screenX, screenY - 15, 12);
@@ -663,7 +1464,7 @@ function drawProjectiles(cameraIsoX, cameraIsoY) {
             ctx.fillStyle = grad;
             ctx.fill();
         } else {
-            // Draw missile (small, colored)
+            // Default missile
             ctx.beginPath();
             ctx.arc(screenX, screenY - 15, 5, 0, Math.PI * 2);
             ctx.fillStyle = `hsl(${p.hue}, 70%, 60%)`;
@@ -683,7 +1484,8 @@ function drawExplosions(cameraIsoX, cameraIsoY) {
         const screenX = centerX + iso.x - cameraIsoX;
         const screenY = centerY + iso.y - cameraIsoY;
 
-        const alpha = 1 - (e.radius / FIREBALL_RADIUS);
+        const maxRadius = e.maxRadius || FIREBALL_RADIUS;
+        const alpha = 1 - (e.radius / maxRadius);
         ctx.beginPath();
         ctx.arc(screenX, screenY, e.radius * 0.5, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 100, 0, ${alpha * 0.5})`;
@@ -701,52 +1503,68 @@ function drawUI() {
     const startX = (canvas.width - totalWidth) / 2;
     const btnY = canvas.height - 60;
 
-    const abilities = [
-        { id: 'missile', name: 'Missile', key: '1', cooldown: MISSILE_COOLDOWN, lastUse: lastMissileTime, color: '#4488ff' },
-        { id: 'dash', name: 'Dash', key: '2', cooldown: DASH_COOLDOWN, lastUse: lastDashTime, color: '#44ff88' },
-        { id: 'fireball', name: 'Fireball', key: '3', cooldown: FIREBALL_COOLDOWN, lastUse: lastFireballTime, color: '#ff6644' }
-    ];
-
-    abilities.forEach((ab, i) => {
+    for (let i = 0; i < 3; i++) {
+        const spell = getSpellForSlot(i);
+        const stats = getSpellStats(spell);
         const x = startX + i * (btnWidth + btnGap);
-        const isSelected = selectedAbility === ab.id;
-        const cdRemaining = Math.max(0, ab.cooldown - (now - ab.lastUse));
-        const cdRatio = cdRemaining / ab.cooldown;
+        const isSelected = selectedSlot === i;
+        const cooldown = stats ? stats.cooldown : 1000;
+        const cdRemaining = Math.max(0, cooldown - (now - lastSpellTime[i]));
+        const cdRatio = cdRemaining / cooldown;
 
-        // Button background
-        ctx.fillStyle = isSelected ? ab.color : '#333';
+        // Button color
+        let btnColor = '#333';
+        if (isSelected) {
+            if (spell && spell.isDash) {
+                btnColor = '#44ff88';
+            } else if (stats && stats.aoe > 0) {
+                btnColor = '#ff6644';
+            } else {
+                btnColor = '#4488ff';
+            }
+        }
+
+        ctx.fillStyle = btnColor;
         ctx.fillRect(x, btnY, btnWidth, btnHeight);
 
-        // Cooldown overlay
         if (cdRatio > 0) {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(x, btnY, btnWidth * cdRatio, btnHeight);
         }
 
-        // Border
         ctx.strokeStyle = isSelected ? '#fff' : '#666';
         ctx.lineWidth = isSelected ? 3 : 1;
         ctx.strokeRect(x, btnY, btnWidth, btnHeight);
 
-        // Text
         ctx.fillStyle = '#fff';
         ctx.font = '14px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(`[${ab.key}] ${ab.name}`, x + btnWidth / 2, btnY + 25);
 
-        // Cooldown text
+        const spellName = spell ? (spell.name || 'Empty') : 'Empty';
+        ctx.fillText(`[${i + 1}] ${spellName.substring(0, 8)}`, x + btnWidth / 2, btnY + 25);
+
         if (cdRemaining > 0) {
             ctx.fillStyle = '#ff0';
             ctx.fillText((cdRemaining / 1000).toFixed(1) + 's', x + btnWidth / 2, btnY + 12);
         }
-    });
+    }
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#fff';
     ctx.font = '14px monospace';
-    ctx.fillText(`Health: ${player.health}/${MAX_HEALTH}`, 10, canvas.height - 80);
+
+    const displayName = accountState.username || 'Guest';
+    ctx.fillText(`${displayName} | Health: ${player.health}/${MAX_HEALTH}`, 10, canvas.height - 80);
     ctx.fillText(`Kills: ${player.kills} | Deaths: ${player.deaths} | KDR: ${player.deaths > 0 ? (player.kills / player.deaths).toFixed(2) : player.kills.toFixed(2)}`, 10, canvas.height - 100);
-    ctx.fillText(`SPACE = Punch | CLICK = Use Ability | TAB = Leaderboard`, 10, canvas.height - 120);
+
+    if (accountState.teamName) {
+        ctx.fillStyle = accountState.teamColor || '#fff';
+        ctx.fillText(`Team: ${accountState.teamName}`, 10, canvas.height - 120);
+        ctx.fillStyle = '#fff';
+    }
+
+    ctx.fillStyle = '#888';
+    ctx.fillText(`SPACE = Punch | CLICK = Use Spell | TAB = Leaderboard`, 10, canvas.height - 140);
 }
 
 function drawLeaderboard() {
@@ -754,39 +1572,35 @@ function drawLeaderboard() {
 
     const padding = 20;
     const rowHeight = 30;
-    const width = 500;
+    const width = 600;
     const height = Math.min(400, padding * 2 + rowHeight * (leaderboardData.length + 1));
     const x = (canvas.width - width) / 2;
     const y = (canvas.height - height) / 2;
 
-    // Background
     ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
     ctx.fillRect(x, y, width, height);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, width, height);
 
-    // Title
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 18px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('LEADERBOARD (Hold TAB)', x + width / 2, y + 25);
 
-    // Headers
     ctx.font = '12px monospace';
     ctx.fillStyle = '#888';
-    const cols = [50, 120, 180, 240, 340];
+    const cols = [30, 150, 250, 310, 370, 480];
     ctx.textAlign = 'left';
-    ctx.fillText('Color', x + cols[0], y + 50);
-    ctx.fillText('Kills', x + cols[1], y + 50);
-    ctx.fillText('Deaths', x + cols[2], y + 50);
-    ctx.fillText('KDR', x + cols[3], y + 50);
-    ctx.fillText('Most Used', x + cols[4], y + 50);
+    ctx.fillText('#', x + cols[0], y + 50);
+    ctx.fillText('Player', x + cols[1], y + 50);
+    ctx.fillText('Team', x + cols[2], y + 50);
+    ctx.fillText('Kills', x + cols[3], y + 50);
+    ctx.fillText('Deaths', x + cols[4], y + 50);
+    ctx.fillText('Most Used', x + cols[5], y + 50);
 
-    // Sort by kills
     const sorted = [...leaderboardData].sort((a, b) => b.kills - a.kills);
 
-    // Add current player if not in list
     let hasPlayer = sorted.some(p => p.id === playerId);
     if (!hasPlayer && playerId) {
         sorted.push({
@@ -794,12 +1608,14 @@ function drawLeaderboard() {
             hue: playerHue,
             kills: player.kills,
             deaths: player.deaths,
-            spellUses: player.spellUses
+            spellUses: player.spellUses,
+            username: accountState.username,
+            teamName: accountState.teamName,
+            teamColor: accountState.teamColor
         });
         sorted.sort((a, b) => b.kills - a.kills);
     }
 
-    // Rows
     ctx.font = '14px monospace';
     sorted.slice(0, 10).forEach((p, i) => {
         const rowY = y + 70 + i * rowHeight;
@@ -810,25 +1626,34 @@ function drawLeaderboard() {
             ctx.fillRect(x + 10, rowY - 15, width - 20, rowHeight - 2);
         }
 
-        // Color indicator
+        // Rank
+        ctx.fillStyle = isMe ? '#fff' : '#ccc';
+        ctx.fillText((i + 1).toString(), x + cols[0], rowY);
+
+        // Player name with color indicator
         ctx.fillStyle = `hsl(${p.hue}, 70%, 50%)`;
-        ctx.fillRect(x + cols[0], rowY - 10, 20, 15);
-        if (isMe) {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x + cols[0], rowY - 10, 20, 15);
+        ctx.fillRect(x + cols[1] - 20, rowY - 10, 15, 15);
+
+        ctx.fillStyle = isMe ? '#fff' : '#ccc';
+        const displayName = p.username || `Player ${p.id.split('_')[1]}`;
+        ctx.fillText(displayName.substring(0, 12), x + cols[1], rowY);
+
+        // Team
+        if (p.teamName) {
+            ctx.fillStyle = p.teamColor || '#888';
+            ctx.fillText(p.teamName.substring(0, 8), x + cols[2], rowY);
+        } else {
+            ctx.fillStyle = '#666';
+            ctx.fillText('-', x + cols[2], rowY);
         }
 
         // Stats
         ctx.fillStyle = isMe ? '#fff' : '#ccc';
-        ctx.textAlign = 'left';
-        ctx.fillText(p.kills.toString(), x + cols[1], rowY);
-        ctx.fillText(p.deaths.toString(), x + cols[2], rowY);
-        const kdr = p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2);
-        ctx.fillText(kdr, x + cols[3], rowY);
+        ctx.fillText(p.kills.toString(), x + cols[3], rowY);
+        ctx.fillText(p.deaths.toString(), x + cols[4], rowY);
 
         // Most used spell
-        const spells = p.spellUses || { missile: 0, dash: 0, fireball: 0, punch: 0 };
+        const spells = p.spellUses || {};
         let mostUsed = 'None';
         let maxUses = 0;
         for (const [spell, uses] of Object.entries(spells)) {
@@ -837,12 +1662,12 @@ function drawLeaderboard() {
                 mostUsed = spell.charAt(0).toUpperCase() + spell.slice(1);
             }
         }
-        ctx.fillText(mostUsed + (maxUses > 0 ? ` (${maxUses})` : ''), x + cols[4], rowY);
+        ctx.fillText(mostUsed.substring(0, 10) + (maxUses > 0 ? ` (${maxUses})` : ''), x + cols[5], rowY);
     });
 }
 
-// Handle button clicks
 canvas.addEventListener('mousedown', (e) => {
+    if (!gameStarted) return;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -852,20 +1677,29 @@ canvas.addEventListener('mousedown', (e) => {
     const startX = (canvas.width - totalWidth) / 2;
     const btnY = canvas.height - 60;
 
-    const abilities = ['missile', 'dash', 'fireball'];
-    abilities.forEach((ab, i) => {
+    for (let i = 0; i < 3; i++) {
         const x = startX + i * (btnWidth + btnGap);
         if (mx >= x && mx <= x + btnWidth && my >= btnY && my <= btnY + btnHeight) {
-            selectedAbility = ab;
+            selectedSlot = i;
             e.stopPropagation();
+            return;
         }
-    });
+    }
 });
 
 function getAllPlayersForRendering() {
-    const players = [{ x: player.x, y: player.y, colors: player, isLocal: true, health: player.health }];
+    const players = [{
+        x: player.x, y: player.y, colors: player, isLocal: true,
+        health: player.health, username: accountState.username,
+        teamColor: accountState.teamColor
+    }];
+
     for (const [id, p] of Object.entries(otherPlayers)) {
-        players.push({ x: p.x, y: p.y, colors: p, isLocal: false, health: p.health || MAX_HEALTH });
+        players.push({
+            x: p.x, y: p.y, colors: p, isLocal: false,
+            health: p.health || MAX_HEALTH, username: p.username,
+            teamColor: p.teamColor
+        });
     }
     players.sort((a, b) => (a.x + a.y) - (b.x + b.y));
     return players;
@@ -875,9 +1709,11 @@ function render() {
     const cameraIso = worldToIso(player.x, player.y);
     drawWorld(cameraIso.x, cameraIso.y);
     drawExplosions(cameraIso.x, cameraIso.y);
+
     for (const p of getAllPlayersForRendering()) {
-        drawIsoPlayer(p.x, p.y, p.colors, p.isLocal, p.health, cameraIso.x, cameraIso.y);
+        drawIsoPlayer(p.x, p.y, p.colors, p.isLocal, p.health, cameraIso.x, cameraIso.y, p.username, p.teamColor);
     }
+
     drawProjectiles(cameraIso.x, cameraIso.y);
     drawUI();
     drawLeaderboard();
@@ -888,15 +1724,17 @@ let lastCleanup = 0;
 function gameLoop(timestamp) {
     const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
     lastTime = timestamp;
-    updatePlayer(dt);
-    updateProjectiles(dt);
-    updateExplosions();
-    sendPosition();
 
-    // Cleanup stale players every second
-    if (timestamp - lastCleanup > 1000) {
-        cleanupStalePlayers();
-        lastCleanup = timestamp;
+    if (gameStarted) {
+        updatePlayer(dt);
+        updateProjectiles(dt);
+        updateExplosions();
+        sendPosition();
+
+        if (timestamp - lastCleanup > 1000) {
+            cleanupStalePlayers();
+            lastCleanup = timestamp;
+        }
     }
 
     render();

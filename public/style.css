@@ -38,3 +38,505 @@ body {
     padding: 8px 12px;
     border-radius: 4px;
 }
+
+/* Modal Base Styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: #1a1a2e;
+    border: 2px solid #4a4a6a;
+    border-radius: 12px;
+    padding: 24px;
+    max-height: 90vh;
+    overflow-y: auto;
+    color: #fff;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #fff;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 28px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: #fff;
+}
+
+/* Auth Modal */
+.auth-modal-content {
+    width: 320px;
+    text-align: center;
+}
+
+.auth-modal-content h2 {
+    margin-bottom: 20px;
+    color: #fff;
+}
+
+#auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#auth-form input {
+    padding: 12px;
+    border: 2px solid #4a4a6a;
+    border-radius: 6px;
+    background: #0d0d1a;
+    color: #fff;
+    font-size: 14px;
+}
+
+#auth-form input:focus {
+    outline: none;
+    border-color: #6a6aff;
+}
+
+#auth-form button {
+    padding: 12px;
+    background: #4a4aff;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#auth-form button:hover {
+    background: #5a5aff;
+}
+
+.auth-links {
+    margin-top: 16px;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    font-size: 14px;
+}
+
+.auth-links a {
+    color: #8888ff;
+    text-decoration: none;
+}
+
+.auth-links a:hover {
+    text-decoration: underline;
+}
+
+.auth-links span {
+    color: #666;
+}
+
+.error-msg {
+    color: #ff6666;
+    font-size: 14px;
+    margin-bottom: 12px;
+    min-height: 20px;
+}
+
+/* Spell Modal */
+.spell-modal-content {
+    width: 700px;
+    max-width: 95vw;
+}
+
+.spell-maker-container {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.spell-config {
+    flex: 1;
+    min-width: 300px;
+}
+
+.spell-config input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 2px solid #4a4a6a;
+    border-radius: 6px;
+    background: #0d0d1a;
+    color: #fff;
+    font-size: 14px;
+}
+
+#points-remaining {
+    background: #0d0d1a;
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    text-align: center;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+#points-remaining span {
+    color: #4ade80;
+}
+
+#points-remaining.over-budget span {
+    color: #ff6666;
+}
+
+.stat-sliders {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stat-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 30px 120px;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.stat-row label {
+    color: #aaa;
+}
+
+.stat-row input[type="range"] {
+    width: 100%;
+    cursor: pointer;
+}
+
+.stat-value {
+    text-align: center;
+    color: #4ade80;
+    font-weight: bold;
+}
+
+.stat-info {
+    color: #666;
+    font-size: 11px;
+}
+
+/* Sprite Editor */
+.sprite-editor {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.sprite-editor h3 {
+    margin: 0;
+    font-size: 14px;
+    color: #aaa;
+}
+
+#sprite-canvas {
+    border: 2px solid #4a4a6a;
+    border-radius: 4px;
+    cursor: crosshair;
+    background: #0d0d1a;
+}
+
+.palette {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 180px;
+}
+
+.palette-color {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #333;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.palette-color.selected {
+    border-color: #fff;
+    transform: scale(1.1);
+}
+
+.palette-color.transparent-color {
+    background: linear-gradient(45deg, #333 25%, #666 25%, #666 50%, #333 50%, #333 75%, #666 75%);
+    background-size: 8px 8px;
+}
+
+/* Spell Actions */
+.spell-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    justify-content: center;
+}
+
+/* Spell List */
+.spell-list {
+    margin-top: 20px;
+    border-top: 1px solid #4a4a6a;
+    padding-top: 16px;
+}
+
+.spell-list h3 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: #aaa;
+}
+
+#my-spells {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.spell-item {
+    background: #0d0d1a;
+    border: 2px solid #4a4a6a;
+    border-radius: 6px;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: border-color 0.2s;
+}
+
+.spell-item:hover {
+    border-color: #6a6aff;
+}
+
+.spell-item.selected {
+    border-color: #4ade80;
+}
+
+.spell-item canvas {
+    border-radius: 2px;
+}
+
+.spell-item-name {
+    font-size: 13px;
+}
+
+/* Equipped Spells */
+.equipped-spells {
+    margin-top: 16px;
+    border-top: 1px solid #4a4a6a;
+    padding-top: 16px;
+}
+
+.equipped-spells h3 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: #aaa;
+}
+
+#equipped-slots {
+    display: flex;
+    gap: 12px;
+}
+
+.equip-slot {
+    flex: 1;
+    background: #0d0d1a;
+    border: 2px dashed #4a4a6a;
+    border-radius: 6px;
+    padding: 12px;
+    text-align: center;
+    min-height: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #666;
+}
+
+.equip-slot.filled {
+    border-style: solid;
+    color: #fff;
+}
+
+.equip-slot canvas {
+    border-radius: 2px;
+}
+
+/* Team Modal */
+.team-modal-content {
+    width: 400px;
+}
+
+.team-section {
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #0d0d1a;
+    border-radius: 8px;
+}
+
+.team-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: #aaa;
+}
+
+.team-section input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 2px solid #4a4a6a;
+    border-radius: 6px;
+    background: #1a1a2e;
+    color: #fff;
+    font-size: 14px;
+}
+
+.team-color-picker {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.team-color-picker input[type="color"] {
+    width: 50px;
+    height: 30px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#current-team-info {
+    text-align: center;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #0d0d1a;
+    border-radius: 8px;
+}
+
+#current-team-info h3 {
+    margin: 0 0 12px 0;
+}
+
+#current-team-color-preview {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    margin: 0 auto 12px;
+    border: 3px solid #fff;
+}
+
+/* Buttons */
+.primary-btn {
+    padding: 10px 20px;
+    background: #4a4aff;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.primary-btn:hover {
+    background: #5a5aff;
+}
+
+.primary-btn:disabled {
+    background: #333;
+    cursor: not-allowed;
+}
+
+.danger-btn {
+    padding: 10px 20px;
+    background: #ff4444;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.danger-btn:hover {
+    background: #ff5555;
+}
+
+.small-btn {
+    padding: 6px 12px;
+    background: #333;
+    border: 1px solid #4a4a6a;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.small-btn:hover {
+    background: #444;
+    color: #fff;
+}
+
+/* HUD Buttons */
+#hud-buttons {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 8px;
+    z-index: 100;
+}
+
+#hud-buttons.hidden {
+    display: none;
+}
+
+.hud-btn {
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #4a4a6a;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.hud-btn:hover {
+    background: rgba(74, 74, 106, 0.7);
+}
+
+.hidden {
+    display: none !important;
+}

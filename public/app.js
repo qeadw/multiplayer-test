@@ -1220,6 +1220,8 @@ function handleServerMessage(data) {
         case 'hit':
             if (data.targetId === playerId) {
                 player.health -= (data.damage || 1);
+                // Cap health at max (for healing)
+                if (player.health > MAX_HEALTH) player.health = MAX_HEALTH;
                 playHitSound();
                 if (player.health <= 0) {
                     playDeathSound();
@@ -1229,6 +1231,10 @@ function handleServerMessage(data) {
             }
             if (otherPlayers[data.targetId]) {
                 otherPlayers[data.targetId].health -= (data.damage || 1);
+                // Cap health at max (for healing)
+                if (otherPlayers[data.targetId].health > MAX_HEALTH) {
+                    otherPlayers[data.targetId].health = MAX_HEALTH;
+                }
                 if (otherPlayers[data.targetId].health <= 0) {
                     playDeathSound();
                     otherPlayers[data.targetId].health = MAX_HEALTH;

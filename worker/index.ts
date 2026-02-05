@@ -342,6 +342,10 @@ export class GameRoom {
 
         if (targetPlayer && targetPlayer.data) {
           targetPlayer.data.health -= damage;
+          // Cap health at max (for healing spells)
+          if (targetPlayer.data.health > MAX_HEALTH) {
+            targetPlayer.data.health = MAX_HEALTH;
+          }
           const newHealth = targetPlayer.data.health;
 
           this.broadcast(JSON.stringify({

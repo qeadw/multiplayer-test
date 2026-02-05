@@ -99,10 +99,12 @@ let accountState = {
 };
 
 // Game state
+const MAX_SHIELD = 4;
+
 let player = {
     x: SPAWN_X, y: SPAWN_Y,
     color: playerColor, colorDark: playerColorDark, colorLight: playerColorLight,
-    hue: playerHue, facingRight: true, health: MAX_HEALTH,
+    hue: playerHue, facingRight: true, health: MAX_HEALTH, shield: 0,
     lastDir: { x: 1, y: 0 },
     kills: 0, deaths: 0,
     spellUses: {}
@@ -1270,9 +1272,41 @@ function handleServerMessage(data) {
 
         case 'hit':
             if (data.targetId === playerId) {
-                player.health -= (data.damage || 1);
-                // Cap health at max (for healing)
-                if (player.health > MAX_HEALTH) player.health = MAX_HEALTH;
+                const dmg = data.damage || 1;
+
+                if (dmg < 0) {
+                    // Healing spell - negative damage
+                    const healAmount = Math.abs(dmg);
+                    if (player.health >= MAX_HEALTH) {
+                        // At max health, add to shield instead
+                        player.shield = Math.min(MAX_SHIELD, player.shield + healAmount);
+                    } else {
+                        player.health += healAmount;
+                        if (player.health > MAX_HEALTH) {
+                            // Overflow goes to shield
+                            const overflow = player.health - MAX_HEALTH;
+                            player.health = MAX_HEALTH;
+                            player.shield = Math.min(MAX_SHIELD, player.shield + overflow);
+                        }
+                    }
+                } else {
+                    // Taking damage - shield takes half damage from projectiles
+                    let remainingDmg = dmg;
+                    if (player.shield > 0) {
+                        // Shield takes half damage
+                        const shieldDmg = dmg * 0.5;
+                        if (player.shield >= shieldDmg) {
+                            player.shield -= shieldDmg;
+                            remainingDmg = 0;
+                        } else {
+                            // Shield depleted, remaining damage at full to health
+                            remainingDmg = (shieldDmg - player.shield) * 2;
+                            player.shield = 0;
+                        }
+                    }
+                    player.health -= remainingDmg;
+                }
+
                 // Apply knockback
                 if (data.knockback && data.knockbackDirX !== undefined) {
                     player.x = wrapPosition(player.x + data.knockbackDirX * data.knockback);
@@ -1283,22 +1317,53 @@ function handleServerMessage(data) {
                     playDeathSound();
                     player.deaths++;
                     player.x = SPAWN_X; player.y = SPAWN_Y; player.health = MAX_HEALTH;
+                    player.shield = 0; // Reset shield on death
                 }
             }
             if (otherPlayers[data.targetId]) {
-                otherPlayers[data.targetId].health -= (data.damage || 1);
-                // Cap health at max (for healing)
-                if (otherPlayers[data.targetId].health > MAX_HEALTH) {
-                    otherPlayers[data.targetId].health = MAX_HEALTH;
+                const other = otherPlayers[data.targetId];
+                const dmg = data.damage || 1;
+
+                if (dmg < 0) {
+                    // Healing
+                    const healAmount = Math.abs(dmg);
+                    if (!other.shield) other.shield = 0;
+                    if (other.health >= MAX_HEALTH) {
+                        other.shield = Math.min(MAX_SHIELD, other.shield + healAmount);
+                    } else {
+                        other.health += healAmount;
+                        if (other.health > MAX_HEALTH) {
+                            const overflow = other.health - MAX_HEALTH;
+                            other.health = MAX_HEALTH;
+                            other.shield = Math.min(MAX_SHIELD, other.shield + overflow);
+                        }
+                    }
+                } else {
+                    // Taking damage
+                    if (!other.shield) other.shield = 0;
+                    let remainingDmg = dmg;
+                    if (other.shield > 0) {
+                        const shieldDmg = dmg * 0.5;
+                        if (other.shield >= shieldDmg) {
+                            other.shield -= shieldDmg;
+                            remainingDmg = 0;
+                        } else {
+                            remainingDmg = (shieldDmg - other.shield) * 2;
+                            other.shield = 0;
+                        }
+                    }
+                    other.health -= remainingDmg;
                 }
+
                 // Apply knockback to other players visually
                 if (data.knockback && data.knockbackDirX !== undefined) {
-                    otherPlayers[data.targetId].x = wrapPosition(otherPlayers[data.targetId].x + data.knockbackDirX * data.knockback);
-                    otherPlayers[data.targetId].y = wrapPosition(otherPlayers[data.targetId].y + data.knockbackDirY * data.knockback);
+                    other.x = wrapPosition(other.x + data.knockbackDirX * data.knockback);
+                    other.y = wrapPosition(other.y + data.knockbackDirY * data.knockback);
                 }
-                if (otherPlayers[data.targetId].health <= 0) {
+                if (other.health <= 0) {
                     playDeathSound();
-                    otherPlayers[data.targetId].health = MAX_HEALTH;
+                    other.health = MAX_HEALTH;
+                    other.shield = 0; // Reset shield on death
                 }
             }
             break;
@@ -1319,10 +1384,12 @@ function handleServerMessage(data) {
         case 'respawn':
             if (data.id === playerId) {
                 player.x = data.x; player.y = data.y; player.health = MAX_HEALTH;
+                player.shield = 0; // Reset shield on respawn
             } else if (otherPlayers[data.id]) {
                 otherPlayers[data.id].x = data.x;
                 otherPlayers[data.id].y = data.y;
                 otherPlayers[data.id].health = MAX_HEALTH;
+                otherPlayers[data.id].shield = 0; // Reset shield on respawn
             }
             break;
 
@@ -1427,8 +1494,10 @@ function drawWorld(cameraIsoX, cameraIsoY) {
     ctx.drawImage(worldCanvas, drawX, drawY);
 }
 
-function drawHealthBar(screenX, screenY, health, isLocal) {
+function drawHealthBar(screenX, screenY, health, isLocal, shield = 0) {
     const barWidth = 30, barHeight = 4, y = screenY - 45;
+
+    // Health bar
     ctx.fillStyle = '#333';
     ctx.fillRect(screenX - barWidth / 2, y, barWidth, barHeight);
     ctx.fillStyle = health > 2 ? '#4ade80' : health > 1 ? '#fbbf24' : '#ef4444';
@@ -1436,6 +1505,17 @@ function drawHealthBar(screenX, screenY, health, isLocal) {
     ctx.strokeStyle = isLocal ? '#fff' : '#888';
     ctx.lineWidth = 1;
     ctx.strokeRect(screenX - barWidth / 2, y, barWidth, barHeight);
+
+    // Shield bar (above health bar, cyan color)
+    if (shield > 0) {
+        const shieldY = y - 6;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(screenX - barWidth / 2, shieldY, barWidth, barHeight);
+        ctx.fillStyle = '#00ffff'; // Cyan for shield
+        ctx.fillRect(screenX - barWidth / 2, shieldY, (shield / MAX_SHIELD) * barWidth, barHeight);
+        ctx.strokeStyle = isLocal ? '#fff' : '#888';
+        ctx.strokeRect(screenX - barWidth / 2, shieldY, barWidth, barHeight);
+    }
 }
 
 function drawUsername(screenX, screenY, username, teamColor) {
@@ -1459,7 +1539,7 @@ function drawUsername(screenX, screenY, username, teamColor) {
     ctx.textAlign = 'left';
 }
 
-function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, cameraIsoY, username, teamColor) {
+function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, cameraIsoY, username, teamColor, shield = 0) {
     const centerX = canvas.width / 2, centerY = canvas.height / 2;
     const iso = worldToIso(worldX, worldY);
     const screenX = centerX + iso.x - cameraIsoX;
@@ -1513,7 +1593,7 @@ function drawIsoPlayer(worldX, worldY, colors, isLocal, health, cameraIsoX, came
     ctx.closePath();
     ctx.fill(); ctx.stroke();
 
-    drawHealthBar(screenX, screenY, health, isLocal);
+    drawHealthBar(screenX, screenY, health, isLocal, shield);
     drawUsername(screenX, screenY, username, teamColor);
 }
 
@@ -1645,7 +1725,8 @@ function drawUI() {
     ctx.font = '14px monospace';
 
     const displayName = accountState.username || 'Guest';
-    ctx.fillText(`${displayName} | Health: ${player.health}/${MAX_HEALTH}`, 10, canvas.height - 80);
+    const shieldText = player.shield > 0 ? ` | Shield: ${player.shield.toFixed(1)}/${MAX_SHIELD}` : '';
+    ctx.fillText(`${displayName} | Health: ${player.health}/${MAX_HEALTH}${shieldText}`, 10, canvas.height - 80);
     ctx.fillText(`Kills: ${player.kills} | Deaths: ${player.deaths} | KDR: ${player.deaths > 0 ? (player.kills / player.deaths).toFixed(2) : player.kills.toFixed(2)}`, 10, canvas.height - 100);
 
     if (accountState.teamName) {
@@ -1761,14 +1842,14 @@ function getAllPlayersForRendering() {
     const players = [{
         x: player.x, y: player.y, colors: player, isLocal: true,
         health: player.health, username: accountState.username,
-        teamColor: accountState.teamColor
+        teamColor: accountState.teamColor, shield: player.shield
     }];
 
     for (const [id, p] of Object.entries(otherPlayers)) {
         players.push({
             x: p.x, y: p.y, colors: p, isLocal: false,
             health: p.health || MAX_HEALTH, username: p.username,
-            teamColor: p.teamColor
+            teamColor: p.teamColor, shield: p.shield || 0
         });
     }
     players.sort((a, b) => (a.x + a.y) - (b.x + b.y));
@@ -1781,7 +1862,7 @@ function render() {
     drawExplosions(cameraIso.x, cameraIso.y);
 
     for (const p of getAllPlayersForRendering()) {
-        drawIsoPlayer(p.x, p.y, p.colors, p.isLocal, p.health, cameraIso.x, cameraIso.y, p.username, p.teamColor);
+        drawIsoPlayer(p.x, p.y, p.colors, p.isLocal, p.health, cameraIso.x, cameraIso.y, p.username, p.teamColor, p.shield);
     }
 
     drawProjectiles(cameraIso.x, cameraIso.y);

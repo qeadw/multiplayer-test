@@ -306,7 +306,8 @@ function calculatePointsUsed() {
     const homing = parseInt(document.getElementById('stat-homing').value);
 
     // Damage uses absolute value - healing costs points too
-    return Math.abs(damage) + aoe + speed + cooldown + range + multishot + homing;
+    // Multishot costs 3 per level, Homing costs 2 per level
+    return Math.abs(damage) + aoe + speed + cooldown + range + (multishot * 3) + (homing * 2);
 }
 
 function updatePointsRemaining() {

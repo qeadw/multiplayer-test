@@ -104,18 +104,26 @@ export class GameRoom {
         id TEXT PRIMARY KEY,
         owner_id TEXT NOT NULL,
         name TEXT NOT NULL,
-        points_damage INTEGER DEFAULT 1,
+        points_damage INTEGER DEFAULT 0,
         points_aoe INTEGER DEFAULT 0,
-        points_speed INTEGER DEFAULT 1,
-        points_cooldown INTEGER DEFAULT 1,
-        points_range INTEGER DEFAULT 1,
+        points_speed INTEGER DEFAULT 0,
+        points_cooldown INTEGER DEFAULT 0,
+        points_range INTEGER DEFAULT 0,
         points_projectile_count INTEGER DEFAULT 0,
         points_homing INTEGER DEFAULT 0,
+        points_knockback INTEGER DEFAULT 0,
         sprite_size INTEGER DEFAULT 8,
         sprite_pixels TEXT DEFAULT '',
         sprite_palette TEXT DEFAULT ''
       )
     `);
+
+    // Add knockback column if it doesn't exist (for existing databases)
+    try {
+      sql.exec(`ALTER TABLE spells ADD COLUMN points_knockback INTEGER DEFAULT 0`);
+    } catch (e) {
+      // Column already exists
+    }
 
     sql.exec(`
       CREATE TABLE IF NOT EXISTS teams (
@@ -323,6 +331,9 @@ export class GameRoom {
         const targetId = data.targetId;
         const damage = data.damage || 1;
         const spell = data.spell || 'punch';
+        const knockback = data.knockback || 0;
+        const knockbackDirX = data.knockbackDirX || 0;
+        const knockbackDirY = data.knockbackDirY || 0;
 
         if (player.data) {
           if (!player.data.spellUses[spell]) player.data.spellUses[spell] = 0;
@@ -353,6 +364,9 @@ export class GameRoom {
             attackerId: player.id,
             targetId: targetId,
             damage: damage,
+            knockback: knockback,
+            knockbackDirX: knockbackDirX,
+            knockbackDirY: knockbackDirY,
             newHealth: newHealth
           }));
 
@@ -435,12 +449,12 @@ export class GameRoom {
         const spellId = this.generateId();
         sql.exec(
           `INSERT INTO spells (id, owner_id, name, points_damage, points_aoe, points_speed,
-            points_cooldown, points_range, points_projectile_count, points_homing,
+            points_cooldown, points_range, points_projectile_count, points_homing, points_knockback,
             sprite_size, sprite_pixels, sprite_palette)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           spellId, accountId, name,
           points.damage, points.aoe, points.speed, points.cooldown, points.range,
-          points.projectileCount, points.homing,
+          points.projectileCount, points.homing, points.knockback || 0,
           sprite.size, sprite.pixels, sprite.palette
         );
 
@@ -459,10 +473,11 @@ export class GameRoom {
         sql.exec(
           `UPDATE spells SET name = ?, points_damage = ?, points_aoe = ?, points_speed = ?,
             points_cooldown = ?, points_range = ?, points_projectile_count = ?, points_homing = ?,
-            sprite_size = ?, sprite_pixels = ?, sprite_palette = ?
+            points_knockback = ?, sprite_size = ?, sprite_pixels = ?, sprite_palette = ?
            WHERE id = ? AND owner_id = ?`,
           name, points.damage, points.aoe, points.speed, points.cooldown, points.range,
-          points.projectileCount, points.homing, sprite.size, sprite.pixels, sprite.palette,
+          points.projectileCount, points.homing, points.knockback || 0,
+          sprite.size, sprite.pixels, sprite.palette,
           spellId, accountId
         );
 

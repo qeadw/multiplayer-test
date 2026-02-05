@@ -32,7 +32,8 @@ const SPELL_STATS = {
     cooldown: [2000, 1820, 1640, 1460, 1280, 1100, 920, 740, 560, 380, 200], // ms (0-10)
     range: [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000], // ms lifetime (0-10)
     projectileCount: [1, 2, 3, 4],
-    homing: [0, 0.02, 0.05] // turn rate
+    homing: [0, 0.02, 0.05], // turn rate
+    knockback: [0, 50, 100, 150, 200, 250] // pixels push (0-5)
 };
 
 // Sprite palette
@@ -248,6 +249,7 @@ function resetSpellEditor() {
     document.getElementById('stat-range').value = 0;
     document.getElementById('stat-multishot').value = 0;
     document.getElementById('stat-homing').value = 0;
+    document.getElementById('stat-knockback').value = 0;
     spriteEditorState.pixels = new Array(64).fill(0);
     editingSpellId = null;
     document.getElementById('delete-spell').classList.add('hidden');
@@ -264,6 +266,7 @@ function loadSpellIntoEditor(spell) {
     document.getElementById('stat-range').value = spell.points_range;
     document.getElementById('stat-multishot').value = spell.points_projectile_count;
     document.getElementById('stat-homing').value = spell.points_homing;
+    document.getElementById('stat-knockback').value = spell.points_knockback || 0;
 
     if (spell.sprite_pixels) {
         spriteEditorState.pixels = spell.sprite_pixels.split(',').map(Number);
@@ -304,10 +307,11 @@ function calculatePointsUsed() {
     const range = parseInt(document.getElementById('stat-range').value);
     const multishot = parseInt(document.getElementById('stat-multishot').value);
     const homing = parseInt(document.getElementById('stat-homing').value);
+    const knockback = parseInt(document.getElementById('stat-knockback').value);
 
     // Damage uses absolute value - healing costs points too
-    // Multishot costs 3 per level, Homing costs 2 per level
-    return Math.abs(damage) + aoe + speed + cooldown + range + (multishot * 3) + (homing * 2);
+    // Multishot costs 3 per level, Homing costs 2 per level, Knockback costs 2 per level
+    return Math.abs(damage) + aoe + speed + cooldown + range + (multishot * 3) + (homing * 2) + (knockback * 2);
 }
 
 function updatePointsRemaining() {
@@ -436,7 +440,8 @@ document.getElementById('save-spell').addEventListener('click', () => {
             cooldown: parseInt(document.getElementById('stat-cooldown').value),
             range: parseInt(document.getElementById('stat-range').value),
             projectileCount: parseInt(document.getElementById('stat-multishot').value),
-            homing: parseInt(document.getElementById('stat-homing').value)
+            homing: parseInt(document.getElementById('stat-homing').value),
+            knockback: parseInt(document.getElementById('stat-knockback').value)
         },
         sprite: {
             size: 8,
@@ -711,12 +716,50 @@ function requestLeaderboard() {
     }
 }
 
-canvas.addEventListener('click', (e) => {
+// Auto-fire when holding click
+let mouseDown = false;
+let mouseX = 0;
+let mouseY = 0;
+
+canvas.addEventListener('mousedown', (e) => {
     if (!gameStarted) return;
+
+    // Check if clicking on ability buttons
     const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left - canvas.width / 2;
-    const clickY = e.clientY - rect.top - canvas.height / 2;
-    useAbility(clickX, clickY);
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const btnWidth = 100, btnHeight = 40, btnGap = 10;
+    const totalWidth = btnWidth * 3 + btnGap * 2;
+    const startX = (canvas.width - totalWidth) / 2;
+    const btnY = canvas.height - 60;
+
+    for (let i = 0; i < 3; i++) {
+        const x = startX + i * (btnWidth + btnGap);
+        if (mx >= x && mx <= x + btnWidth && my >= btnY && my <= btnY + btnHeight) {
+            selectedSlot = i;
+            return; // Don't start firing
+        }
+    }
+
+    mouseDown = true;
+    mouseX = e.clientX - rect.left - canvas.width / 2;
+    mouseY = e.clientY - rect.top - canvas.height / 2;
+    useAbility(mouseX, mouseY);
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (!gameStarted || !mouseDown) return;
+    const rect = canvas.getBoundingClientRect();
+    mouseX = e.clientX - rect.left - canvas.width / 2;
+    mouseY = e.clientY - rect.top - canvas.height / 2;
+});
+
+canvas.addEventListener('mouseup', () => {
+    mouseDown = false;
+});
+
+canvas.addEventListener('mouseleave', () => {
+    mouseDown = false;
 });
 
 // ============== COORDINATE HELPERS ==============
@@ -803,12 +846,13 @@ function getSpellStats(spell) {
 
     return {
         damage: spell.points_damage,
-        aoe: SPELL_STATS.aoe[spell.points_aoe],
-        speed: SPELL_STATS.speed[spell.points_speed],
-        cooldown: SPELL_STATS.cooldown[spell.points_cooldown],
-        range: SPELL_STATS.range[spell.points_range],
-        projectileCount: SPELL_STATS.projectileCount[spell.points_projectile_count],
-        homing: SPELL_STATS.homing[spell.points_homing],
+        aoe: SPELL_STATS.aoe[spell.points_aoe] || 0,
+        speed: SPELL_STATS.speed[spell.points_speed] || 200,
+        cooldown: SPELL_STATS.cooldown[spell.points_cooldown] || 2000,
+        range: SPELL_STATS.range[spell.points_range] || 1000,
+        projectileCount: SPELL_STATS.projectileCount[spell.points_projectile_count] || 1,
+        homing: SPELL_STATS.homing[spell.points_homing] || 0,
+        knockback: SPELL_STATS.knockback[spell.points_knockback] || 0,
         sprite_pixels: spell.sprite_pixels,
         sprite_palette: spell.sprite_palette,
         name: spell.name
@@ -888,6 +932,7 @@ function spawnProjectile(stats, dirX, dirY) {
         damage: stats.damage,
         aoe: stats.aoe,
         homing: stats.homing,
+        knockback: stats.knockback,
         range: stats.range,
         hue: playerHue,
         born: Date.now(),
@@ -975,6 +1020,9 @@ function updateProjectiles(dt) {
                                         type: "attack",
                                         targetId: eid,
                                         damage: p.damage,
+                                        knockback: p.knockback || 0,
+                                        knockbackDirX: p.dirX,
+                                        knockbackDirY: p.dirY,
                                         spell: p.spellName || 'custom'
                                     }));
                                 }
@@ -987,6 +1035,9 @@ function updateProjectiles(dt) {
                                 type: "attack",
                                 targetId: id,
                                 damage: p.damage,
+                                knockback: p.knockback || 0,
+                                knockbackDirX: p.dirX,
+                                knockbackDirY: p.dirY,
                                 spell: p.spellName || 'custom'
                             }));
                         }
@@ -1222,6 +1273,11 @@ function handleServerMessage(data) {
                 player.health -= (data.damage || 1);
                 // Cap health at max (for healing)
                 if (player.health > MAX_HEALTH) player.health = MAX_HEALTH;
+                // Apply knockback
+                if (data.knockback && data.knockbackDirX !== undefined) {
+                    player.x = wrapPosition(player.x + data.knockbackDirX * data.knockback);
+                    player.y = wrapPosition(player.y + data.knockbackDirY * data.knockback);
+                }
                 playHitSound();
                 if (player.health <= 0) {
                     playDeathSound();
@@ -1234,6 +1290,11 @@ function handleServerMessage(data) {
                 // Cap health at max (for healing)
                 if (otherPlayers[data.targetId].health > MAX_HEALTH) {
                     otherPlayers[data.targetId].health = MAX_HEALTH;
+                }
+                // Apply knockback to other players visually
+                if (data.knockback && data.knockbackDirX !== undefined) {
+                    otherPlayers[data.targetId].x = wrapPosition(otherPlayers[data.targetId].x + data.knockbackDirX * data.knockback);
+                    otherPlayers[data.targetId].y = wrapPosition(otherPlayers[data.targetId].y + data.knockbackDirY * data.knockback);
                 }
                 if (otherPlayers[data.targetId].health <= 0) {
                     playDeathSound();
@@ -1696,27 +1757,6 @@ function drawLeaderboard() {
     });
 }
 
-canvas.addEventListener('mousedown', (e) => {
-    if (!gameStarted) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-
-    const btnWidth = 100, btnHeight = 40, btnGap = 10;
-    const totalWidth = btnWidth * 3 + btnGap * 2;
-    const startX = (canvas.width - totalWidth) / 2;
-    const btnY = canvas.height - 60;
-
-    for (let i = 0; i < 3; i++) {
-        const x = startX + i * (btnWidth + btnGap);
-        if (mx >= x && mx <= x + btnWidth && my >= btnY && my <= btnY + btnHeight) {
-            selectedSlot = i;
-            e.stopPropagation();
-            return;
-        }
-    }
-});
-
 function getAllPlayersForRendering() {
     const players = [{
         x: player.x, y: player.y, colors: player, isLocal: true,
@@ -1760,6 +1800,11 @@ function gameLoop(timestamp) {
         updateProjectiles(dt);
         updateExplosions();
         sendPosition();
+
+        // Auto-fire when holding mouse
+        if (mouseDown) {
+            useAbility(mouseX, mouseY);
+        }
 
         if (timestamp - lastCleanup > 1000) {
             cleanupStalePlayers();

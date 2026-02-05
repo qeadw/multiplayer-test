@@ -24,13 +24,13 @@ const FIREBALL_DAMAGE = 2;
 const FIREBALL_RADIUS = 80;
 const FIREBALL_COOLDOWN = 15000;
 
-// Spell stat mappings
+// Spell stat mappings (0-10 scale for most stats)
 const SPELL_STATS = {
-    damage: { min: -2, max: 4 }, // -2 = healing
-    aoe: [0, 25, 50, 75, 100], // pixels
-    speed: [200, 250, 300, 350, 400], // px/s
-    cooldown: [2000, 1650, 1300, 950, 600], // ms
-    range: [1500, 2000, 2500, 3000, 3500], // ms lifetime
+    damage: { min: -10, max: 10 }, // negative = healing
+    aoe: [0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250], // pixels (0-10)
+    speed: [200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700], // px/s (0-10)
+    cooldown: [2000, 1820, 1640, 1460, 1280, 1100, 920, 740, 560, 380, 200], // ms (0-10)
+    range: [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000], // ms lifetime (0-10)
     projectileCount: [1, 2, 3, 4],
     homing: [0, 0.02, 0.05] // turn rate
 };

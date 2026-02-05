@@ -241,11 +241,11 @@ function openSpellModal() {
 
 function resetSpellEditor() {
     document.getElementById('spell-name').value = '';
-    document.getElementById('stat-damage').value = 1;
+    document.getElementById('stat-damage').value = 0;
     document.getElementById('stat-aoe').value = 0;
-    document.getElementById('stat-speed').value = 1;
-    document.getElementById('stat-cooldown').value = 1;
-    document.getElementById('stat-range').value = 1;
+    document.getElementById('stat-speed').value = 0;
+    document.getElementById('stat-cooldown').value = 0;
+    document.getElementById('stat-range').value = 0;
     document.getElementById('stat-multishot').value = 0;
     document.getElementById('stat-homing').value = 0;
     spriteEditorState.pixels = new Array(64).fill(0);
@@ -305,7 +305,8 @@ function calculatePointsUsed() {
     const multishot = parseInt(document.getElementById('stat-multishot').value);
     const homing = parseInt(document.getElementById('stat-homing').value);
 
-    return damage + aoe + speed + cooldown + range + multishot + homing;
+    // Damage uses absolute value - healing costs points too
+    return Math.abs(damage) + aoe + speed + cooldown + range + multishot + homing;
 }
 
 function updatePointsRemaining() {
